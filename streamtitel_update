@@ -1,0 +1,127 @@
+// ============================================================
+//  "WR Command"
+//  Trigger: Command → !wr
+//
+//  Liest die "current_game" variable aus und sucht
+//  den passenden Eintrag in der CSV-Datei.
+//
+// ============================================================
+//  MADE BY KIPPERIN1
+//  twitch.tv/kipperin1
+// ============================================================
+
+using System;
+using System.IO;
+using System.Text;
+
+public class CPHInline
+{
+    public bool Execute()
+    {
+        // ── KONFIGURATION ─────────────────────────────────────────
+        string csvPath = @"C:\StreamerBot\speedrun_wr.csv";
+        char delimiter = ';';
+        // ──────────────────────────────────────────────────────────
+
+        //Kategorie aus der gloablen Variable lesen
+        //    
+       string currentGame = CPH.GetGlobalVar<string>("current_game", true);
+
+        if (string.IsNullOrEmpty(currentGame))
+        {
+            CPH.SendMessage("⚠️ Keine Twitch-Kategorie gespeichert. Wechsle einmal die Kategorie im Twitch-Dashboard und versuche es erneut.");
+            return false;
+        }
+
+        // 2) CSV-Datei prüfen
+        if (!File.Exists(csvPath))
+        {
+            CPH.SendMessage($"⚠️ CSV-Datei nicht gefunden: {csvPath}");
+            return false;
+        }
+
+        // 3) CSV einlesen
+        string[] lines;
+        try
+        {
+            lines = File.ReadAllLines(csvPath, new UTF8Encoding(true));
+        }
+        catch (Exception ex)
+        {
+            CPH.SendMessage($"⚠️ Fehler beim Lesen der CSV-Datei: {ex.Message}");
+            return false;
+        }
+
+        if (lines.Length < 2)
+        {
+            CPH.SendMessage("⚠️ Die CSV-Datei enthält keine Daten.");
+            return false;
+        }
+
+        // 4) Header-Indizes ermitteln
+        string[] headers = lines[0].Split(delimiter);
+
+        int idxTwitch = FindHeader(headers, "twitch kategorie");
+        int idxSRKat  = FindHeader(headers, "speedrun kategorie");
+        int idxR2Name = FindHeader(headers, "runner name");
+
+        if (idxTwitch < 0 || idxSRKat < 0)
+        {
+            CPH.SendMessage("⚠️ CSV-Header nicht erkannt. Prüfe ob alle Spalten vorhanden sind.");
+            return false;
+        }
+
+        // 5) Passende Zeile anhand der Twitch-Kategorie suchen
+        string searchKey = currentGame.ToLower();
+        string[] matchedRow = null;
+
+        for (int i = 1; i < lines.Length; i++)
+        {
+            if (string.IsNullOrWhiteSpace(lines[i])) continue;
+
+            string[] cols = lines[i].Split(delimiter);
+            if (cols.Length <= idxTwitch) continue;
+
+            if (cols[idxTwitch].Trim().ToLower() == searchKey)
+            {
+                matchedRow = cols;
+                break;
+            }
+        }
+
+        if (matchedRow == null)
+        {
+            CPH.SendMessage($"❌ Kein Eintrag für \"{currentGame}\" in der CSV gefunden. Prüfe ob die Twitch-Kategorie in der Tabelle eingetragen ist.");
+            return false;
+        }
+
+        // 6) Werte auslesen
+
+        string srKategorie = Get(matchedRow, idxSRKat);
+        string runner2Name = Get(matchedRow, idxR2Name);
+
+        // 7) Nachrichten senden
+        CPH.SetChannelTitle($"{currentGame} {srKategorie} von  {runnerName} | ZFM 2026 Tag 1.");
+
+        return true;
+    }
+
+    private int FindHeader(string[] headers, string search)
+    {
+        for (int i = 0; i < headers.Length; i++)
+            if (headers[i].Trim().ToLower() == search)
+                return i;
+        return -1;
+    }
+
+    private string Get(string[] cols, int idx)
+    {
+        if (idx < 0 || idx >= cols.Length) return "";
+        return cols[idx].Trim();
+    }
+}
+//## License
+//Copyright © 2026 Kipperin1
+
+//Licensed under the GNU AGPL v3.  
+//**Additional restriction:** Commercial use is not permitted without prior written consent.
