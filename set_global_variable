@@ -10,3 +10,16 @@ Put in a name. For example "current_game"
 For the value: %gameName%
 
 Witth that the streamer.bot will save the category from twitch in the variable "current_game"
+
+
+After that we will add an action that will trigger when we change the category on twitch
+
+So add the action, give it a name an then we will add the trigger.
+
+the trigger we use is under twitch > general > stream update
+we will not be editing the trigger, so you can leave it as it is.
+
+For the sub action we will set the global variable
+Add > Core > Global > Global Set
+
+an there we will put in our "current_game" and the value "%gameName%"
