@@ -1,0 +1,12 @@
+to track the category on twitch, you will need to set a global variable with the value "%gameName%" 
+this will safe the category name and makes it usable for the code
+
+
+How to create Global Variable
+
+Click on the "Global Variables" on the top menu.
+Then right click -> Add Variable
+Put in a name. For example "current_game"
+For the value: %gameName%
+
+Witth that the streamer.bot will save the category from twitch in the variable "current_game"
