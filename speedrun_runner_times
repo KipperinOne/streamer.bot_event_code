@@ -104,8 +104,8 @@ public class CPHInline
         string srKategorie = Get(matchedRow, idxSRKat);
         string wrName      = Get(matchedRow, idxWrName);
         string wrZeit      = Get(matchedRow, idxWrZeit);
-        string runnerName = Get(matchedRow, idxR2Name);
-        string runnerZeit = Get(matchedRow, idxR2Zeit);
+        string runnerName = Get(matchedRow, idxRName);
+        string runnerZeit = Get(matchedRow, idxRZeit);
 
         // 7) Nachrichten senden
         CPH.SendMessage($"Der Weltrekord bei {spielName} in der Kategorie {srKategorie} liegt bei {wrZeit} und wurde von {wrName} aufgestellt.");
