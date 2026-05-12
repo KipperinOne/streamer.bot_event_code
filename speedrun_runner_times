@@ -2,8 +2,8 @@
 //  "WR Command"
 //  Trigger: Command → !wr
 //
-//  Liest die von currentGame gespeicherte Kategorie und sucht
-//  den passenden Eintrag in der CSV-Datei.
+//  reads the currentGame variable and searches the input out of an csv.file
+//  
 //
 // ============================================================
 // MADE BY KIPPERIN1
@@ -23,8 +23,8 @@ public class CPHInline
         char delimiter = ';';
         // ──────────────────────────────────────────────────────────
 
-        // 1) Kategorie aus der dauerhaften Variable lesen
-        //    (wird von Action 1 "Kategorie Tracker" gespeichert)
+        // 1) reads the category variable
+        //    (will be saved in "category tracker"
        string currentGame = CPH.GetGlobalVar<string>("current_game", true);
 
         if (string.IsNullOrEmpty(currentGame))
@@ -33,14 +33,14 @@ public class CPHInline
             return false;
         }
 
-        // 2) CSV-Datei prüfen
+        // 2) checks if csv.file exist
         if (!File.Exists(csvPath))
         {
             CPH.SendMessage($"⚠️ CSV-Datei nicht gefunden: {csvPath}");
             return false;
         }
 
-        // 3) CSV einlesen
+        // 3) reading csv
         string[] lines;
         try
         {
@@ -58,7 +58,7 @@ public class CPHInline
             return false;
         }
 
-        // 4) Header-Indizes ermitteln
+        // 4) checks header of csv
         string[] headers = lines[0].Split(delimiter);
 
         int idxSpiel  = FindHeader(headers, "spielname");
@@ -75,7 +75,7 @@ public class CPHInline
             return false;
         }
 
-        // 5) Passende Zeile anhand der Twitch-Kategorie suchen
+        // 5) Search for a matching row based on the Twitch category
         string searchKey = currentGame.ToLower();
         string[] matchedRow = null;
 
@@ -99,7 +99,7 @@ public class CPHInline
             return false;
         }
 
-        // 6) Werte auslesen
+        // 6) reading values
         string spielName   = Get(matchedRow, idxSpiel);
         string srKategorie = Get(matchedRow, idxSRKat);
         string wrName      = Get(matchedRow, idxWrName);
@@ -107,7 +107,7 @@ public class CPHInline
         string runnerName = Get(matchedRow, idxRName);
         string runnerZeit = Get(matchedRow, idxRZeit);
 
-        // 7) Nachrichten senden
+        // 7) send message
         CPH.SendMessage($"Der Weltrekord bei {spielName} in der Kategorie {srKategorie} liegt bei {wrZeit} und wurde von {wrName} aufgestellt.");
 
         if (!string.IsNullOrEmpty(runnerName) && !string.IsNullOrEmpty(runnerZeit))
