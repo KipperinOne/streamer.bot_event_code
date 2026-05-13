@@ -1,7 +1,7 @@
 // ============================================================
 //  ACTION: "Previous Game"  |  Command: !previousgame
-//  Verringert den Zeilenindex um 1.
-//  Mit !wr wird die aktuelle Zeile dann ausgegeben.
+//  Decreases the line index by 1.
+//  The current line is then printed using !wr.
 // ============================================================
 
 using System;
@@ -12,7 +12,7 @@ public class CPHInline
 {
     public bool Execute()
     {
-        // ── KONFIGURATION ─────────────────────────────────────────
+        // ── CONFIGURATION ─────────────────────────────────────────
         string csvPath = @"C:\StreamerBot\speedrun_wr.csv";
         // ──────────────────────────────────────────────────────────
 
