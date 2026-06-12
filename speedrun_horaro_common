@@ -1,0 +1,288 @@
+// ============================================================
+//  Shared Horaro helpers for Streamer.bot inline C# actions.
+//  Add this code to the same Streamer.bot C# compile context as
+//  speedrun_horaro_wr and speedrun_horaro_next.
+// ============================================================
+
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Reflection;
+using System.Text;
+using System.Text.RegularExpressions;
+using Newtonsoft.Json.Linq;
+
+public static class SpeedrunHoraroCommon
+{
+    private static string cachedSchedulePath;
+    private static DateTime cachedScheduleWriteUtc;
+    private static List<ScheduleRun> cachedScheduleRuns;
+    private static Type cachedCphType;
+    private static MethodInfo cachedGetGlobalVarString;
+
+    public static string GetConfiguredPath(object cph, string globalVarName, string fallback)
+    {
+        string configured = GetGlobalVarString(cph, globalVarName);
+        return string.IsNullOrWhiteSpace(configured) ? fallback : configured.Trim();
+    }
+
+    public static int GetConfiguredInt(object cph, string globalVarName, int fallback)
+    {
+        string configured = GetGlobalVarString(cph, globalVarName);
+        int value;
+        if (int.TryParse(configured, NumberStyles.Integer, CultureInfo.InvariantCulture, out value))
+            return value;
+
+        return fallback;
+    }
+
+    public static DateTimeOffset GetNowForSchedule(object cph)
+    {
+        string overrideValue = GetGlobalVarString(cph, "horaro_schedule_now");
+        if (!string.IsNullOrWhiteSpace(overrideValue))
+            return DateTimeOffset.Parse(overrideValue.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal);
+
+        return DateTimeOffset.Now;
+    }
+
+    public static List<ScheduleRun> LoadRuns(string scheduleJsonPath)
+    {
+        if (!File.Exists(scheduleJsonPath))
+            throw new FileNotFoundException("Datei nicht gefunden: " + scheduleJsonPath);
+
+        DateTime writeUtc = File.GetLastWriteTimeUtc(scheduleJsonPath);
+        if (cachedScheduleRuns != null &&
+            string.Equals(cachedSchedulePath, scheduleJsonPath, StringComparison.OrdinalIgnoreCase) &&
+            cachedScheduleWriteUtc == writeUtc)
+        {
+            return cachedScheduleRuns;
+        }
+
+        string json = File.ReadAllText(scheduleJsonPath, new UTF8Encoding(false));
+        JObject root = JObject.Parse(json);
+        JObject schedule = root["schedule"] as JObject;
+        if (schedule == null)
+            throw new InvalidDataException("Schedule-Objekt fehlt");
+
+        JArray columns = schedule["columns"] as JArray;
+        JArray items = schedule["items"] as JArray;
+        if (columns == null || items == null)
+            throw new InvalidDataException("Spalten oder Eintraege fehlen");
+
+        int gameIndex = FindColumn(columns, "Spieltitel", "Game", "Game Name");
+        int runnerIndex = FindColumn(columns, "Runner", "Runners");
+        int categoryIndex = FindColumn(columns, "Kategorie", "Category");
+        int estimateIndex = FindColumn(columns, "Estimate", "Schaetzung");
+
+        if (gameIndex < 0 || runnerIndex < 0 || categoryIndex < 0)
+            throw new InvalidDataException("benoetigte Spalten nicht gefunden");
+
+        List<ScheduleRun> runs = new List<ScheduleRun>();
+
+        foreach (JToken itemToken in items)
+        {
+            JObject item = itemToken as JObject;
+            if (item == null)
+                continue;
+
+            JArray data = item["data"] as JArray;
+            if (data == null)
+                continue;
+
+            ScheduleRun run = new ScheduleRun();
+            run.Game = GetData(data, gameIndex);
+            run.Runner = GetData(data, runnerIndex);
+            run.Category = GetData(data, categoryIndex);
+            run.Estimate = GetData(data, estimateIndex);
+            run.ScheduledText = ((string)item["scheduled"]) ?? "";
+            run.ScheduledUnix = GetLong(item["scheduled_t"]);
+            run.LengthSeconds = GetLong(item["length_t"]);
+
+            if (run.ScheduledUnix <= 0 || run.LengthSeconds <= 0)
+                continue;
+
+            if (IsRunnableEntry(run))
+                runs.Add(run);
+        }
+
+        runs.Sort((a, b) => a.ScheduledUnix.CompareTo(b.ScheduledUnix));
+        cachedSchedulePath = scheduleJsonPath;
+        cachedScheduleWriteUtc = writeUtc;
+        cachedScheduleRuns = runs;
+        return runs;
+    }
+
+    public static ScheduleRun FindCurrentRun(List<ScheduleRun> runs, DateTimeOffset now)
+    {
+        long nowUnix = ToUnixSeconds(now);
+        foreach (ScheduleRun run in runs)
+        {
+            long endUnix = run.ScheduledUnix + run.LengthSeconds;
+            if (run.ScheduledUnix <= nowUnix && nowUnix < endUnix)
+                return run;
+        }
+
+        return null;
+    }
+
+    public static ScheduleRun FindNextRun(List<ScheduleRun> runs, DateTimeOffset now)
+    {
+        long nowUnix = ToUnixSeconds(now);
+        ScheduleRun currentRun = FindCurrentRun(runs, now);
+
+        foreach (ScheduleRun run in runs)
+        {
+            if (currentRun != null && run.ScheduledUnix <= currentRun.ScheduledUnix)
+                continue;
+
+            if (run.ScheduledUnix > nowUnix || currentRun != null)
+                return run;
+        }
+
+        return null;
+    }
+
+    public static string FormatRun(ScheduleRun run, bool includeTime)
+    {
+        string text = Clean(run.Game);
+        if (!string.IsNullOrEmpty(run.Category))
+            text += " - " + Clean(run.Category);
+        if (!string.IsNullOrEmpty(run.Runner))
+            text += " von " + Clean(run.Runner);
+        if (includeTime)
+            text += " um " + FormatScheduleTime(run);
+        if (!string.IsNullOrEmpty(run.Estimate))
+            text += " (Schaetzung: " + Clean(run.Estimate) + ")";
+
+        return text;
+    }
+
+    public static string Clean(string value)
+    {
+        return Regex.Replace((value ?? "").Trim(), @"\s+", " ");
+    }
+
+    public static string Normalize(string value)
+    {
+        return Clean(value).ToLowerInvariant();
+    }
+
+    public static long ToUnixSeconds(DateTimeOffset value)
+    {
+        return (long)(value.ToUniversalTime() - new DateTimeOffset(1970, 1, 1, 0, 0, 0, TimeSpan.Zero)).TotalSeconds;
+    }
+
+    private static string GetGlobalVarString(object cph, string globalVarName)
+    {
+        try
+        {
+            Type cphType = cph.GetType();
+            if (cachedGetGlobalVarString == null || cachedCphType != cphType)
+            {
+                cachedGetGlobalVarString = null;
+                cachedCphType = cphType;
+
+                foreach (MethodInfo candidate in cphType.GetMethods())
+                {
+                    ParameterInfo[] parameters = candidate.GetParameters();
+                    if (candidate.Name == "GetGlobalVar" &&
+                        candidate.IsGenericMethodDefinition &&
+                        parameters.Length == 2 &&
+                        parameters[0].ParameterType == typeof(string) &&
+                        parameters[1].ParameterType == typeof(bool))
+                    {
+                        cachedGetGlobalVarString = candidate.MakeGenericMethod(typeof(string));
+                        break;
+                    }
+                }
+            }
+
+            if (cachedGetGlobalVarString == null)
+                return "";
+
+            object value = cachedGetGlobalVarString.Invoke(cph, new object[] { globalVarName, true });
+            return value == null ? "" : value.ToString();
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    private static int FindColumn(JArray columns, params string[] names)
+    {
+        for (int i = 0; i < columns.Count; i++)
+        {
+            string column = Normalize((string)columns[i]);
+            foreach (string name in names)
+            {
+                if (column == Normalize(name))
+                    return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static string GetData(JArray data, int index)
+    {
+        if (index < 0 || index >= data.Count || data[index].Type == JTokenType.Null)
+            return "";
+
+        return ((string)data[index] ?? "").Trim();
+    }
+
+    private static long GetLong(JToken token)
+    {
+        if (token == null)
+            return 0;
+
+        long value;
+        if (long.TryParse(token.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value))
+            return value;
+
+        return 0;
+    }
+
+    private static bool IsRunnableEntry(ScheduleRun run)
+    {
+        string game = Normalize(run.Game);
+        string runner = Normalize(run.Runner);
+
+        if (string.IsNullOrEmpty(game) || string.IsNullOrEmpty(runner) || runner == "-")
+            return false;
+
+        if (game == "intro" || game == "kickoff" || game == "gdq" || game == "the checkpoint" || game.Contains("daily recap"))
+            return false;
+
+        if (runner == "interview crew")
+            return false;
+
+        return true;
+    }
+
+    private static string FormatScheduleTime(ScheduleRun run)
+    {
+        try
+        {
+            DateTimeOffset scheduled = DateTimeOffset.Parse(run.ScheduledText, CultureInfo.InvariantCulture);
+            return scheduled.ToString("ddd HH:mm", CultureInfo.InvariantCulture);
+        }
+        catch
+        {
+            return run.ScheduledText;
+        }
+    }
+
+    public class ScheduleRun
+    {
+        public string Game;
+        public string Runner;
+        public string Category;
+        public string Estimate;
+        public string ScheduledText;
+        public long ScheduledUnix;
+        public long LengthSeconds;
+    }
+}
