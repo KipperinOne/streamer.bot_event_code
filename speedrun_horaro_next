@@ -1,0 +1,45 @@
+// ============================================================
+//  ACTION: "Next Run"  |  Command: !next
+//  Requires speedrun_horaro_common in the same C# context.
+// ============================================================
+
+using System;
+using System.Collections.Generic;
+using ScheduleRun = SpeedrunHoraroCommon.ScheduleRun;
+
+public class CPHInline
+{
+    public bool Execute()
+    {
+        string scheduleJsonPath = SpeedrunHoraroCommon.GetConfiguredPath(CPH, "horaro_schedule_json_path", @"C:\StreamerBot\speedrun_schedule.json");
+
+        List<ScheduleRun> runs;
+        try
+        {
+            runs = SpeedrunHoraroCommon.LoadRuns(scheduleJsonPath);
+        }
+        catch (Exception ex)
+        {
+            CPH.SendMessage("Horaro-Schedule konnte nicht gelesen werden: " + ex.Message);
+            return false;
+        }
+
+        if (runs.Count == 0)
+        {
+            CPH.SendMessage("Im Horaro-Schedule wurden keine Runs gefunden.");
+            return false;
+        }
+
+        DateTimeOffset now = SpeedrunHoraroCommon.GetNowForSchedule(CPH);
+        ScheduleRun nextRun = SpeedrunHoraroCommon.FindNextRun(runs, now);
+
+        if (nextRun == null)
+        {
+            CPH.SendMessage("Es gibt keine weiteren Runs im Schedule.");
+            return true;
+        }
+
+        CPH.SendMessage("Als Naechstes: " + SpeedrunHoraroCommon.FormatRun(nextRun, true));
+        return true;
+    }
+}
