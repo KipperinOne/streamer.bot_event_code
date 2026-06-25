@@ -1,6 +1,7 @@
 // ============================================================
 //  ACTION: "WR Command"  |  Command: !wr
 //  Requires speedrun_horaro_common in the same C# context.
+//  Add System.dll in the Streamer.bot C# action References tab.
 // ============================================================
 
 using System;
@@ -11,7 +12,6 @@ using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json.Linq;
-using ScheduleRun = SpeedrunHoraroCommon.ScheduleRun;
 
 public class CPHInline
 {
@@ -21,7 +21,7 @@ public class CPHInline
         string csvPath = SpeedrunHoraroCommon.GetConfiguredPath(CPH, "speedrun_wr_csv_path", @"C:\StreamerBot\speedrun_wr.csv");
         char csvDelimiter = ';';
 
-        List<ScheduleRun> runs;
+        List<SpeedrunHoraroCommon.ScheduleRun> runs;
         try
         {
             runs = SpeedrunHoraroCommon.LoadRuns(scheduleJsonPath);
@@ -39,11 +39,11 @@ public class CPHInline
         }
 
         DateTimeOffset now = SpeedrunHoraroCommon.GetNowForSchedule(CPH);
-        ScheduleRun currentRun = SpeedrunHoraroCommon.FindCurrentRun(runs, now);
+        SpeedrunHoraroCommon.ScheduleRun currentRun = SpeedrunHoraroCommon.FindCurrentRun(runs, now);
 
         if (currentRun == null)
         {
-            ScheduleRun nextRun = SpeedrunHoraroCommon.FindNextRun(runs, now);
+            SpeedrunHoraroCommon.ScheduleRun nextRun = SpeedrunHoraroCommon.FindNextRun(runs, now);
             if (nextRun == null)
                 CPH.SendMessage("Gerade laeuft kein Speedrun und es gibt keine weiteren Runs im Schedule.");
             else
@@ -125,7 +125,7 @@ public class CPHInline
         return true;
     }
 
-    private LiveWrInfo TryGetSpeedrunComWr(ScheduleRun run)
+    private LiveWrInfo TryGetSpeedrunComWr(SpeedrunHoraroCommon.ScheduleRun run)
     {
         string cacheKey = SpeedrunHoraroCommon.Normalize(run.Game) + "|" + SpeedrunHoraroCommon.Normalize(run.Category) + "|" + SpeedrunHoraroCommon.Normalize(run.Runner);
         int cacheSeconds = SpeedrunHoraroCommon.GetConfiguredInt(CPH, "speedruncom_cache_seconds", 300);
@@ -344,7 +344,7 @@ public class CPHInline
         return info;
     }
 
-    private void AddSpeedrunComRunnerPb(LiveWrInfo info, ScheduleRun run, SpeedrunComGame game, SpeedrunComCategory category)
+    private void AddSpeedrunComRunnerPb(LiveWrInfo info, SpeedrunHoraroCommon.ScheduleRun run, SpeedrunComGame game, SpeedrunComCategory category)
     {
         foreach (string runnerName in GetRunnerNameCandidates(run.Runner))
         {
@@ -743,7 +743,7 @@ public class CPHInline
         }
     }
 
-    private WrInfo FindCsvWrInfo(string csvPath, char delimiter, ScheduleRun run)
+    private WrInfo FindCsvWrInfo(string csvPath, char delimiter, SpeedrunHoraroCommon.ScheduleRun run)
     {
         try
         {

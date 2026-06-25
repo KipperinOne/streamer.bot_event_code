@@ -1,7 +1,8 @@
 // ============================================================
 //  Shared Horaro helpers for Streamer.bot inline C# actions.
 //  Add this code to the same Streamer.bot C# compile context as
-//  speedrun_horaro_wr and speedrun_horaro_next.
+//  speedrun_horaro_wr, speedrun_horaro_next, or speedrun_horaro_fetch.
+//  Add System.dll in the Streamer.bot C# action References tab.
 // ============================================================
 
 using System;

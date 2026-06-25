@@ -1,0 +1,112 @@
+// ============================================================
+//  ACTION: "Horaro Schedule aktualisieren"  |  Trigger: Timer
+//  Requires speedrun_horaro_common in the same C# context.
+//  Add System.dll in the Streamer.bot C# action References tab.
+// ============================================================
+
+using System;
+using System.Globalization;
+using System.IO;
+using System.Net;
+using System.Text;
+using Newtonsoft.Json.Linq;
+
+public class CPHInline
+{
+    public bool Execute()
+    {
+        string scheduleJsonPath = SpeedrunHoraroCommon.GetConfiguredPath(CPH, "horaro_schedule_json_path", @"C:\StreamerBot\speedrun_schedule.json");
+        string scheduleApiUrl = SpeedrunHoraroCommon.GetConfiguredPath(CPH, "horaro_schedule_api_url", "");
+
+        if (string.IsNullOrWhiteSpace(scheduleApiUrl))
+        {
+            SetFetchStatus("missing horaro_schedule_api_url", "");
+            return false;
+        }
+
+        try
+        {
+            string json = DownloadScheduleJson(scheduleApiUrl);
+            ValidateScheduleJson(json);
+
+            string directory = Path.GetDirectoryName(scheduleJsonPath);
+            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+                Directory.CreateDirectory(directory);
+
+            if (File.Exists(scheduleJsonPath))
+            {
+                string existing = File.ReadAllText(scheduleJsonPath, new UTF8Encoding(false));
+                if (existing == json)
+                {
+                    SetFetchStatus("unchanged", "");
+                    return true;
+                }
+            }
+
+            File.WriteAllText(scheduleJsonPath, json, new UTF8Encoding(false));
+            SetFetchStatus("updated", "");
+            return true;
+        }
+        catch (WebException ex)
+        {
+            SetFetchStatus("failed", FormatWebException(ex));
+            return false;
+        }
+        catch (Exception ex)
+        {
+            SetFetchStatus("failed", ex.Message);
+            return false;
+        }
+    }
+
+    private string DownloadScheduleJson(string url)
+    {
+        ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+
+        HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+        request.Method = "GET";
+        request.Accept = "application/json";
+        request.UserAgent = SpeedrunHoraroCommon.GetConfiguredPath(CPH, "horaro_schedule_user_agent", "streamerbot-horaro-schedule/1.0");
+        request.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
+        request.Timeout = SpeedrunHoraroCommon.GetConfiguredInt(CPH, "horaro_schedule_timeout_ms", 8000);
+        request.ReadWriteTimeout = request.Timeout;
+
+        using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+        using (Stream stream = response.GetResponseStream())
+        using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+        {
+            return reader.ReadToEnd();
+        }
+    }
+
+    private void ValidateScheduleJson(string json)
+    {
+        JObject root = JObject.Parse(json);
+        JObject schedule = root["schedule"] as JObject;
+        if (schedule == null)
+            throw new InvalidDataException("Schedule-Objekt fehlt");
+
+        if (schedule["columns"] as JArray == null || schedule["items"] as JArray == null)
+            throw new InvalidDataException("Spalten oder Eintraege fehlen");
+    }
+
+    private void SetFetchStatus(string status, string error)
+    {
+        string now = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+        CPH.SetGlobalVar("horaro_schedule_last_fetch_status", status ?? "", true);
+        CPH.SetGlobalVar("horaro_schedule_last_fetch_error", error ?? "", true);
+        CPH.SetGlobalVar("horaro_schedule_last_fetch_utc", now, true);
+    }
+
+    private string FormatWebException(WebException ex)
+    {
+        HttpWebResponse response = ex.Response as HttpWebResponse;
+        if (response != null)
+            return "HTTP " + (int)response.StatusCode + " " + response.StatusCode;
+
+        if (ex.Status == WebExceptionStatus.Timeout)
+            return "Horaro-Anfrage hat zu lange gedauert";
+
+        return ex.Message;
+    }
+}

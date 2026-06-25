@@ -1,11 +1,11 @@
 // ============================================================
 //  ACTION: "Next Run"  |  Command: !next
 //  Requires speedrun_horaro_common in the same C# context.
+//  Add System.dll in the Streamer.bot C# action References tab.
 // ============================================================
 
 using System;
 using System.Collections.Generic;
-using ScheduleRun = SpeedrunHoraroCommon.ScheduleRun;
 
 public class CPHInline
 {
@@ -13,7 +13,7 @@ public class CPHInline
     {
         string scheduleJsonPath = SpeedrunHoraroCommon.GetConfiguredPath(CPH, "horaro_schedule_json_path", @"C:\StreamerBot\speedrun_schedule.json");
 
-        List<ScheduleRun> runs;
+        List<SpeedrunHoraroCommon.ScheduleRun> runs;
         try
         {
             runs = SpeedrunHoraroCommon.LoadRuns(scheduleJsonPath);
@@ -31,7 +31,7 @@ public class CPHInline
         }
 
         DateTimeOffset now = SpeedrunHoraroCommon.GetNowForSchedule(CPH);
-        ScheduleRun nextRun = SpeedrunHoraroCommon.FindNextRun(runs, now);
+        SpeedrunHoraroCommon.ScheduleRun nextRun = SpeedrunHoraroCommon.FindNextRun(runs, now);
 
         if (nextRun == null)
         {
