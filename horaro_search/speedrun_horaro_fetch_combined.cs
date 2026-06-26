@@ -17,7 +17,6 @@ using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json.Linq;
-using System.Net;
 
 public static class SpeedrunHoraroCommon
 {
@@ -312,27 +311,31 @@ public class CPHInline
         {
             SetUpTlsProtocols();
 
-            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(apiUrl);
+            System.Net.HttpWebRequest request = (System.Net.HttpWebRequest)System.Net.WebRequest.Create(apiUrl);
             request.Method = "GET";
             request.Accept = "application/json";
             request.UserAgent = SpeedrunHoraroCommon.GetConfiguredPath(CPH, "horaro_schedule_user_agent", "streamerbot-speedrun-event/1.0");
-            request.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
+            request.AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate;
             request.Timeout = timeoutMs;
             request.ReadWriteTimeout = timeoutMs;
 
             JObject root;
-            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+            using (System.Net.HttpWebResponse response = (System.Net.HttpWebResponse)request.GetResponse())
             using (Stream stream = response.GetResponseStream())
             using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
             {
                 root = JObject.Parse(reader.ReadToEnd());
             }
 
-            // Je nach Horaro-Endpoint liegt das Schedule-Objekt entweder
-            // direkt im Root oder unter einem "schedule"-Schluessel.
+            // Je nach Horaro-Endpoint liegt das Schedule-Objekt unter
+            // "schedule", unter "data" oder direkt im Root.
             // Wir normalisieren das hier, damit LoadRuns() in
             // speedrun_horaro_common immer root.schedule.* findet.
-            JObject scheduleObject = root["schedule"] as JObject ?? root;
+            JObject scheduleObject = root["schedule"] as JObject;
+            if (scheduleObject == null)
+                scheduleObject = root["data"] as JObject;
+            if (scheduleObject == null)
+                scheduleObject = root;
 
             if (scheduleObject["items"] == null)
             {
@@ -351,9 +354,9 @@ public class CPHInline
             CPH.LogInfo("Horaro-Schedule aktualisiert: " + outputPath);
             return true;
         }
-        catch (WebException ex)
+        catch (System.Net.WebException ex)
         {
-            HttpWebResponse response = ex.Response as HttpWebResponse;
+            System.Net.HttpWebResponse response = ex.Response as System.Net.HttpWebResponse;
             string detail = response != null
                 ? "HTTP " + (int)response.StatusCode + " " + response.StatusCode
                 : ex.Message;
@@ -379,7 +382,7 @@ public class CPHInline
 
         try
         {
-            ServicePointManager.SecurityProtocol = (SecurityProtocolType)wanted;
+            System.Net.ServicePointManager.SecurityProtocol = (System.Net.SecurityProtocolType)wanted;
             return;
         }
         catch
@@ -388,7 +391,7 @@ public class CPHInline
 
         try
         {
-            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+            System.Net.ServicePointManager.SecurityProtocol = System.Net.SecurityProtocolType.Tls12;
         }
         catch
         {

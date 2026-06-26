@@ -7,7 +7,6 @@
 using System;
 using System.Globalization;
 using System.IO;
-using System.Net;
 using System.Text;
 using Newtonsoft.Json.Linq;
 
@@ -26,8 +25,7 @@ public class CPHInline
 
         try
         {
-            string json = DownloadScheduleJson(scheduleApiUrl);
-            ValidateScheduleJson(json);
+            string json = NormalizeScheduleJson(DownloadScheduleJson(scheduleApiUrl));
 
             string directory = Path.GetDirectoryName(scheduleJsonPath);
             if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
@@ -47,7 +45,7 @@ public class CPHInline
             SetFetchStatus("updated", "");
             return true;
         }
-        catch (WebException ex)
+        catch (System.Net.WebException ex)
         {
             SetFetchStatus("failed", FormatWebException(ex));
             return false;
@@ -61,17 +59,15 @@ public class CPHInline
 
     private string DownloadScheduleJson(string url)
     {
-        ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
-
-        HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+        System.Net.HttpWebRequest request = (System.Net.HttpWebRequest)System.Net.WebRequest.Create(url);
         request.Method = "GET";
         request.Accept = "application/json";
         request.UserAgent = SpeedrunHoraroCommon.GetConfiguredPath(CPH, "horaro_schedule_user_agent", "streamerbot-horaro-schedule/1.0");
-        request.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
+        request.AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate;
         request.Timeout = SpeedrunHoraroCommon.GetConfiguredInt(CPH, "horaro_schedule_timeout_ms", 8000);
         request.ReadWriteTimeout = request.Timeout;
 
-        using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+        using (System.Net.HttpWebResponse response = (System.Net.HttpWebResponse)request.GetResponse())
         using (Stream stream = response.GetResponseStream())
         using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
         {
@@ -79,13 +75,28 @@ public class CPHInline
         }
     }
 
-    private void ValidateScheduleJson(string json)
+    private string NormalizeScheduleJson(string json)
     {
         JObject root = JObject.Parse(json);
         JObject schedule = root["schedule"] as JObject;
-        if (schedule == null)
-            throw new InvalidDataException("Schedule-Objekt fehlt");
+        if (schedule != null)
+        {
+            ValidateSchedule(schedule);
+            return json;
+        }
 
+        schedule = root["data"] as JObject;
+        if (schedule != null)
+        {
+            ValidateSchedule(schedule);
+            return "{\"schedule\":" + schedule.ToString() + "}";
+        }
+
+        throw new InvalidDataException("Schedule-Objekt fehlt");
+    }
+
+    private void ValidateSchedule(JObject schedule)
+    {
         if (schedule["columns"] as JArray == null || schedule["items"] as JArray == null)
             throw new InvalidDataException("Spalten oder Eintraege fehlen");
     }
@@ -98,13 +109,13 @@ public class CPHInline
         CPH.SetGlobalVar("horaro_schedule_last_fetch_utc", now, true);
     }
 
-    private string FormatWebException(WebException ex)
+    private string FormatWebException(System.Net.WebException ex)
     {
-        HttpWebResponse response = ex.Response as HttpWebResponse;
+        System.Net.HttpWebResponse response = ex.Response as System.Net.HttpWebResponse;
         if (response != null)
             return "HTTP " + (int)response.StatusCode + " " + response.StatusCode;
 
-        if (ex.Status == WebExceptionStatus.Timeout)
+        if (ex.Status == System.Net.WebExceptionStatus.Timeout)
             return "Horaro-Anfrage hat zu lange gedauert";
 
         return ex.Message;

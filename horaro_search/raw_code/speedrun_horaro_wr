@@ -8,7 +8,6 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json.Linq;
@@ -156,7 +155,7 @@ public class CPHInline
 
             return result;
         }
-        catch (WebException ex)
+        catch (System.Net.WebException ex)
         {
             return CacheFailure(cacheKey, FormatWebException(ex));
         }
@@ -504,17 +503,17 @@ public class CPHInline
 
     private JObject GetJson(string url)
     {
-        ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+        System.Net.ServicePointManager.SecurityProtocol = System.Net.SecurityProtocolType.Tls12;
 
-        HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+        System.Net.HttpWebRequest request = (System.Net.HttpWebRequest)System.Net.WebRequest.Create(url);
         request.Method = "GET";
         request.Accept = "application/json";
         request.UserAgent = SpeedrunHoraroCommon.GetConfiguredPath(CPH, "speedruncom_user_agent", "streamerbot-speedrun-event/1.0");
-        request.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
+        request.AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate;
         request.Timeout = SpeedrunHoraroCommon.GetConfiguredInt(CPH, "speedruncom_request_timeout_ms", 6000);
         request.ReadWriteTimeout = request.Timeout;
 
-        using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+        using (System.Net.HttpWebResponse response = (System.Net.HttpWebResponse)request.GetResponse())
         using (Stream stream = response.GetResponseStream())
         using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
         {
@@ -823,13 +822,13 @@ public class CPHInline
         return cols[index].Trim();
     }
 
-    private string FormatWebException(WebException ex)
+    private string FormatWebException(System.Net.WebException ex)
     {
-        HttpWebResponse response = ex.Response as HttpWebResponse;
+        System.Net.HttpWebResponse response = ex.Response as System.Net.HttpWebResponse;
         if (response != null)
             return "speedrun.com antwortete mit HTTP " + (int)response.StatusCode + " " + response.StatusCode;
 
-        if (ex.Status == WebExceptionStatus.Timeout)
+        if (ex.Status == System.Net.WebExceptionStatus.Timeout)
             return "speedrun.com-Anfrage hat zu lange gedauert";
 
         return ex.Message;
