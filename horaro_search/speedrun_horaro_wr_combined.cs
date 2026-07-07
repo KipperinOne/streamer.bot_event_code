@@ -1,13 +1,13 @@
 // ============================================================
 //  COMBINED: speedrun_horaro_common + speedrun_horaro_wr
 //  Action: "WR Command"  |  Command: !wr
-//  Diesen GESAMTEN Inhalt in EINE Execute-C#-Code-Sub-Action einfuegen.
-//  WICHTIG: Im Tab "References" dieser Sub-Action System.dll hinzufuegen!
-//  (z.B. C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.dll)
+//  Insert ALL of this content into ONE Execute C# Code sub-action.
+//  IMPORTANT: Add System.dll in the "References" tab of this sub-action!
+//  (e.g., C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.dll)
 //
-//  NEU: Unterstuetzt mehrere Runner im Horaro-"Runner"-Feld
-//  (Trenner: "&", ",", "/", "+", " and ", " vs " / " vs. ", " versus ").
-//  Fuer jeden erkannten Runner wird einzeln die PB auf speedrun.com gesucht.
+//  NEW: Supports multiple runners in the Horaro "Runner" field
+//  (Separators: "&", ",", "/", "+", " and ", " vs " / " vs. ", " versus ").
+//  For each recognized runner, the PB is searched for individually on speedrun.com.
 // ============================================================
 
 using System;
@@ -18,6 +18,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json.Linq;
+using System.Net;
 
 public static class SpeedrunHoraroCommon
 {
@@ -440,7 +441,7 @@ public class CPHInline
 
             return result;
         }
-        catch (System.Net.WebException ex)
+        catch (WebException ex)
         {
             return CacheFailure(cacheKey, FormatWebException(ex));
         }
@@ -518,7 +519,14 @@ public class CPHInline
         if (data == null || data.Count == 0)
             return null;
 
-        string wanted = NormalizeCategory(categoryName);
+        // Trenne Hauptkategorie und optionalen Subkategorie-Hinweis.
+        // z.B. "Any% - Glitchless" -> haupt="Any%", sub="Glitchless"
+        //      "Any% (Glitchless)" -> haupt="Any%", sub="Glitchless"
+        //      "Any%"              -> haupt="Any%", sub=""
+        string subHint;
+        string mainCategory = ExtractCategoryAndSub(categoryName, out subHint);
+        string wanted = NormalizeCategory(mainCategory);
+
         JObject best = null;
         int bestScore = -1;
 
@@ -542,17 +550,47 @@ public class CPHInline
         SpeedrunComCategory result = new SpeedrunComCategory();
         result.Id = GetString(best["id"]);
         result.Name = GetString(best["name"]);
-        result.VariableFilters = GetDefaultVariableFilters(result.Id);
+        result.VariableFilters = GetVariableFilters(result.Id, subHint);
         return string.IsNullOrEmpty(result.Id) ? null : result;
     }
 
-    private List<SpeedrunComVariableFilter> GetDefaultVariableFilters(string categoryId)
+    // Trennt "Any% - Glitchless" in ("Any%", "Glitchless") auf.
+    // Unterstuetzt: " - ", " / ", " | " als Trennzeichen und runde Klammern.
+    private string ExtractCategoryAndSub(string raw, out string sub)
+    {
+        sub = "";
+        if (string.IsNullOrEmpty(raw))
+            return raw ?? "";
+
+        // Klammern: "Any% (Glitchless)"
+        System.Text.RegularExpressions.Match m =
+            Regex.Match(raw, @"^(.*?)\s*\(([^)]+)\)\s*$");
+        if (m.Success)
+        {
+            sub = m.Groups[2].Value.Trim();
+            return m.Groups[1].Value.Trim();
+        }
+
+        // Bindestriche, Slashes, Pipes: "Any% - Glitchless"
+        m = Regex.Match(raw, @"^(.*?)\s+[-/|]\s+(.+)$");
+        if (m.Success)
+        {
+            sub = m.Groups[2].Value.Trim();
+            return m.Groups[1].Value.Trim();
+        }
+
+        return raw.Trim();
+    }
+
+    private List<SpeedrunComVariableFilter> GetVariableFilters(string categoryId, string subHint)
     {
         List<SpeedrunComVariableFilter> filters = new List<SpeedrunComVariableFilter>();
         JObject root = GetJson("https://www.speedrun.com/api/v1/categories/" + Uri.EscapeDataString(categoryId) + "/variables");
         JArray data = root["data"] as JArray;
         if (data == null)
             return filters;
+
+        string normalizedHint = SpeedrunHoraroCommon.Normalize(subHint ?? "");
 
         foreach (JToken token in data)
         {
@@ -563,13 +601,50 @@ public class CPHInline
             if (GetString(variable["is-subcategory"]).ToLowerInvariant() != "true")
                 continue;
 
-            string defaultValue = GetString(variable["values"], "default");
-            if (string.IsNullOrEmpty(defaultValue))
+            string chosenValue = null;
+
+            // Wenn ein Subkategorie-Hinweis aus dem Horaro-Feld vorhanden ist,
+            // versuchen wir den passenden Wert anhand des Namens zu finden.
+            if (!string.IsNullOrEmpty(normalizedHint))
+            {
+                JObject values = variable["values"] as JObject;
+                JObject valuesData = values != null ? values["values"] as JObject : null;
+                if (valuesData != null)
+                {
+                    string bestValueId = null;
+                    int bestScore = 0;
+                    foreach (System.Collections.Generic.KeyValuePair<string, JToken> kv in valuesData)
+                    {
+                        JObject valueObj = kv.Value as JObject;
+                        if (valueObj == null)
+                            continue;
+                        string label = SpeedrunHoraroCommon.Normalize(GetString(valueObj["label"]));
+                        int score = 0;
+                        if (label == normalizedHint)
+                            score = 100;
+                        else if (label.Contains(normalizedHint) || normalizedHint.Contains(label))
+                            score = 70;
+                        if (score > bestScore)
+                        {
+                            bestScore = score;
+                            bestValueId = kv.Key;
+                        }
+                    }
+                    if (bestScore > 0)
+                        chosenValue = bestValueId;
+                }
+            }
+
+            // Fallback: Standard-Wert laut speedrun.com, falls kein Treffer.
+            if (string.IsNullOrEmpty(chosenValue))
+                chosenValue = GetString(variable["values"], "default");
+
+            if (string.IsNullOrEmpty(chosenValue))
                 continue;
 
             SpeedrunComVariableFilter filter = new SpeedrunComVariableFilter();
             filter.Id = GetString(variable["id"]);
-            filter.Value = defaultValue;
+            filter.Value = chosenValue;
             if (!string.IsNullOrEmpty(filter.Id))
                 filters.Add(filter);
         }
@@ -852,17 +927,17 @@ public class CPHInline
 
     private JObject GetJson(string url)
     {
-        System.Net.ServicePointManager.SecurityProtocol = System.Net.SecurityProtocolType.Tls12;
+        ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
 
-        System.Net.HttpWebRequest request = (System.Net.HttpWebRequest)System.Net.WebRequest.Create(url);
+        HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
         request.Method = "GET";
         request.Accept = "application/json";
         request.UserAgent = SpeedrunHoraroCommon.GetConfiguredPath(CPH, "speedruncom_user_agent", "streamerbot-speedrun-event/1.0");
-        request.AutomaticDecompression = System.Net.DecompressionMethods.GZip | System.Net.DecompressionMethods.Deflate;
+        request.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
         request.Timeout = SpeedrunHoraroCommon.GetConfiguredInt(CPH, "speedruncom_request_timeout_ms", 6000);
         request.ReadWriteTimeout = request.Timeout;
 
-        using (System.Net.HttpWebResponse response = (System.Net.HttpWebResponse)request.GetResponse())
+        using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
         using (Stream stream = response.GetResponseStream())
         using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
         {
@@ -1204,13 +1279,13 @@ public class CPHInline
         return cols[index].Trim();
     }
 
-    private string FormatWebException(System.Net.WebException ex)
+    private string FormatWebException(WebException ex)
     {
-        System.Net.HttpWebResponse response = ex.Response as System.Net.HttpWebResponse;
+        HttpWebResponse response = ex.Response as HttpWebResponse;
         if (response != null)
             return "speedrun.com antwortete mit HTTP " + (int)response.StatusCode + " " + response.StatusCode;
 
-        if (ex.Status == System.Net.WebExceptionStatus.Timeout)
+        if (ex.Status == WebExceptionStatus.Timeout)
             return "speedrun.com-Anfrage hat zu lange gedauert";
 
         return ex.Message;
