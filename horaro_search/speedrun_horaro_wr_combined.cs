@@ -1,12 +1,12 @@
 // ============================================================
 //  COMBINED: speedrun_horaro_common + speedrun_horaro_wr
-//  Action: "WR Command"  |  Command: !wr
+//  Action: “WR Command”  |  Command: !wr
 //  Insert ALL of this content into ONE Execute C# Code sub-action.
-//  IMPORTANT: Add System.dll in the "References" tab of this sub-action!
+//  IMPORTANT: Add System.dll in the “References” tab of this sub-action!
 //  (e.g., C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.dll)
 //
-//  NEW: Supports multiple runners in the Horaro "Runner" field
-//  (Separators: "&", ",", "/", "+", " and ", " vs " / " vs. ", " versus ").
+//  NEW: Supports multiple runners in the Horaro “Runner” field
+//  (Separators: “&”, “,”, “/”, “+”, “ and ”, “ vs ” / “ vs. ”, “ versus ”).
 //  For each recognized runner, the PB is searched for individually on speedrun.com.
 // ============================================================
 
@@ -80,10 +80,10 @@ public static class SpeedrunHoraroCommon
         int gameIndex = FindColumn(columns, "Spieltitel", "Game", "Game Name");
         int runnerIndex = FindColumn(columns, "Runner", "Runners");
         int categoryIndex = FindColumn(columns, "Kategorie", "Category");
-        int estimateIndex = FindColumn(columns, "Estimate", "Schaetzung");
+        int estimateIndex = FindColumn(columns, "Estimate");
 
         if (gameIndex < 0 || runnerIndex < 0 || categoryIndex < 0)
-            throw new InvalidDataException("benoetigte Spalten nicht gefunden");
+            throw new InvalidDataException("benötigte Spalten nicht gefunden");
 
         List<ScheduleRun> runs = new List<ScheduleRun>();
 
@@ -160,7 +160,7 @@ public static class SpeedrunHoraroCommon
         if (includeTime)
             text += " um " + FormatScheduleTime(run);
         if (!string.IsNullOrEmpty(run.Estimate))
-            text += " (Schaetzung: " + Clean(run.Estimate) + ")";
+            text += " (Estimate: " + Clean(run.Estimate) + ")";
 
         return text;
     }
@@ -325,16 +325,16 @@ public class CPHInline
         {
             SpeedrunHoraroCommon.ScheduleRun nextRun = SpeedrunHoraroCommon.FindNextRun(runs, now);
             if (nextRun == null)
-                CPH.SendMessage("Gerade laeuft kein Speedrun und es gibt keine weiteren Runs im Schedule.");
+                CPH.SendMessage("Gerade läuft kein Speedrun und es gibt keine weiteren Runs im Schedule.");
             else
-                CPH.SendMessage("Gerade laeuft kein Speedrun. Als Naechstes: " + SpeedrunHoraroCommon.FormatRun(nextRun, true));
+                CPH.SendMessage("Gerade läuft kein Speedrun. Als Nächstes: " + SpeedrunHoraroCommon.FormatRun(nextRun, true));
 
             return true;
         }
 
         WrInfo csvInfo = null;
         LiveWrInfo liveInfo = TryGetSpeedrunComWr(currentRun);
-        string message = "Aktuell laeuft: " + SpeedrunHoraroCommon.FormatRun(currentRun, false);
+        string message = "Aktuell läuft: " + SpeedrunHoraroCommon.FormatRun(currentRun, false);
 
         if (liveInfo.Success)
         {
@@ -519,10 +519,10 @@ public class CPHInline
         if (data == null || data.Count == 0)
             return null;
 
-        // Trenne Hauptkategorie und optionalen Subkategorie-Hinweis.
-        // z.B. "Any% - Glitchless" -> haupt="Any%", sub="Glitchless"
-        //      "Any% (Glitchless)" -> haupt="Any%", sub="Glitchless"
-        //      "Any%"              -> haupt="Any%", sub=""
+        // Split the category name into main category and optional subcategory hint.
+        // e.g. "Any% - Glitchless" -> main="Any%", sub="Glitchless"
+        //      "Any% (Glitchless)" -> main="Any%", sub="Glitchless"
+        //      "Any%"              -> main="Any%", sub=""
         string subHint;
         string mainCategory = ExtractCategoryAndSub(categoryName, out subHint);
         string wanted = NormalizeCategory(mainCategory);
@@ -554,15 +554,15 @@ public class CPHInline
         return string.IsNullOrEmpty(result.Id) ? null : result;
     }
 
-    // Trennt "Any% - Glitchless" in ("Any%", "Glitchless") auf.
-    // Unterstuetzt: " - ", " / ", " | " als Trennzeichen und runde Klammern.
+    // Splits e.g. "Any% - Glitchless" into ("Any%", "Glitchless").
+    // Supported separators: " - ", " / ", " | " and round brackets.
     private string ExtractCategoryAndSub(string raw, out string sub)
     {
         sub = "";
         if (string.IsNullOrEmpty(raw))
             return raw ?? "";
 
-        // Klammern: "Any% (Glitchless)"
+        // Round brackets: "Any% (Glitchless)"
         System.Text.RegularExpressions.Match m =
             Regex.Match(raw, @"^(.*?)\s*\(([^)]+)\)\s*$");
         if (m.Success)
@@ -571,7 +571,7 @@ public class CPHInline
             return m.Groups[1].Value.Trim();
         }
 
-        // Bindestriche, Slashes, Pipes: "Any% - Glitchless"
+        // Dashes, slashes, pipes: "Any% - Glitchless"
         m = Regex.Match(raw, @"^(.*?)\s+[-/|]\s+(.+)$");
         if (m.Success)
         {
@@ -603,8 +603,8 @@ public class CPHInline
 
             string chosenValue = null;
 
-            // Wenn ein Subkategorie-Hinweis aus dem Horaro-Feld vorhanden ist,
-            // versuchen wir den passenden Wert anhand des Namens zu finden.
+            // If a subcategory hint was extracted from the Horaro field,
+            // try to find the matching value by its label on speedrun.com.
             if (!string.IsNullOrEmpty(normalizedHint))
             {
                 JObject values = variable["values"] as JObject;
@@ -635,7 +635,7 @@ public class CPHInline
                 }
             }
 
-            // Fallback: Standard-Wert laut speedrun.com, falls kein Treffer.
+            // Fallback: use the default value from speedrun.com if no label matched.
             if (string.IsNullOrEmpty(chosenValue))
                 chosenValue = GetString(variable["values"], "default");
 
@@ -709,7 +709,7 @@ public class CPHInline
 
         if (segments.Count <= 1)
         {
-            // Nur ein Runner im Feld (ggf. mit Leerzeichen im Namen, z.B. "John Doe").
+            // Single runner in the field (name may contain spaces, e.g. "John Doe").
             string wholeText = segments.Count == 1 ? segments[0] : run.Runner;
             RunnerPbEntry entry = FindPbForRunnerText(wholeText, game, category, null);
             if (entry != null)
@@ -717,7 +717,7 @@ public class CPHInline
             return;
         }
 
-        // Mehrere Runner im Feld (Race/Co-op): jeden einzeln auf speedrun.com nachschlagen.
+        // Multiple runners (race/co-op): look up each one individually on speedrun.com.
         List<string> seenUserIds = new List<string>();
         foreach (string segment in segments)
         {
@@ -738,7 +738,7 @@ public class CPHInline
             if (seenUserIds != null && !string.IsNullOrEmpty(user.Id))
             {
                 if (seenUserIds.Contains(user.Id))
-                    continue; // dieser Runner wurde ueber einen anderen Namens-Treffer schon erfasst
+                    continue; // this runner was already captured under a different name variant
 
                 seenUserIds.Add(user.Id);
             }
@@ -757,9 +757,9 @@ public class CPHInline
         return null;
     }
 
-    // Trennt das Runner-Feld in einzelne Personen auf, z.B.
+    // Splits the runner field into individual persons, e.g.
     // "Alice & Bob" / "Alice, Bob" / "Alice vs. Bob" / "Alice and Bob" -> ["Alice", "Bob"].
-    // Liefert genau 1 Eintrag zurueck, wenn keine Trenner gefunden wurden (Einzel-Runner).
+    // Returns exactly 1 entry if no separator was found (single runner).
     private List<string> SplitRunnerSegments(string runnerText)
     {
         List<string> segments = new List<string>();
@@ -767,8 +767,10 @@ public class CPHInline
         if (string.IsNullOrEmpty(clean))
             return segments;
 
-        string splitText = Regex.Replace(clean, @"\s+(and|vs\.?|versus)\s+", "|", RegexOptions.IgnoreCase);
-        splitText = splitText.Replace("&", "|").Replace(",", "|").Replace("/", "|").Replace("+", "|");
+        // Replace word separators with | so we can split on them.
+        // \s* around the dot handles both "vs." and "vs. " correctly.
+        string splitText = Regex.Replace(clean, @"\s+(and|versus|vs\.?)\s*", "|", RegexOptions.IgnoreCase);
+        splitText = splitText.Replace("&", "|").Replace(",", "|").Replace("+", "|");
 
         foreach (string part in splitText.Split('|'))
         {
@@ -795,8 +797,10 @@ public class CPHInline
 
         candidates.Add(clean);
 
-        string splitText = Regex.Replace(clean, @"\s+(and|vs|versus)\s+", " ", RegexOptions.IgnoreCase);
-        splitText = splitText.Replace("&", " ").Replace(",", " ");
+        // Strip separators before splitting into individual name tokens.
+        // vs\.? handles both "vs" and "vs." (with or without trailing dot).
+        string splitText = Regex.Replace(clean, @"\s+(and|versus|vs\.?)\s*", " ", RegexOptions.IgnoreCase);
+        splitText = splitText.Replace("&", " ").Replace(",", " ").Replace("+", " ");
 
         foreach (string part in Regex.Split(splitText, @"\s+"))
         {
@@ -996,7 +1000,9 @@ public class CPHInline
         if (double.TryParse(GetString(times["primary_t"]), NumberStyles.Float, CultureInfo.InvariantCulture, out seconds))
             return FormatSeconds(seconds);
 
+        // Fallback: use the pre-formatted string from the API if numeric parsing fails.
         return GetString(times["primary"]);
+        
     }
 
     private string FormatSeconds(double seconds)
@@ -1004,21 +1010,46 @@ public class CPHInline
         if (seconds < 0)
             return "";
 
-        TimeSpan time = TimeSpan.FromSeconds(seconds);
-        int totalHours = (int)Math.Floor(time.TotalHours);
+        // Round to the nearest millisecond to eliminate floating-point noise
+        // (e.g. 83.999999997 s should display as 1:24, not 1:23).
+        // All display values (h, m, s, ms) are derived from this integer.
+        long totalMs  = (long)Math.Round(seconds * 1000.0);
+        int  ms       = (int)(totalMs % 1000);
+        int  totalSec = (int)(totalMs / 1000);
+        int  s        = totalSec % 60;
+        int  m        = (totalSec / 60) % 60;
+        int  h        = totalSec / 3600;
+        int  cs       = ms / 10;
 
-        if (Math.Abs(seconds - Math.Round(seconds)) > 0.0001)
+        bool hasMilliseconds = ms % 10 != 0;        // e.g. 67 ms  → 3-digit
+        bool hasCentiseconds = !hasMilliseconds && cs > 0; // e.g. 60 ms  → 2-digit
+
+        if (hasMilliseconds)
         {
-            int centiseconds = (int)Math.Round(time.Milliseconds / 10.0);
-            if (totalHours > 0)
-                return string.Format(CultureInfo.InvariantCulture, "{0}:{1:00}:{2:00}.{3:00}", totalHours, time.Minutes, time.Seconds, centiseconds);
-            return string.Format(CultureInfo.InvariantCulture, "{0}:{1:00}.{2:00}", time.Minutes, time.Seconds, centiseconds);
+            // Full millisecond precision (3 digits), e.g. 1:23:45.067
+            if (h > 0)
+                return string.Format(CultureInfo.InvariantCulture,
+                    "{0}:{1:00}:{2:00}.{3:000}", h, m, s, ms);
+            return string.Format(CultureInfo.InvariantCulture,
+                "{0}:{1:00}.{2:000}", m, s, ms);
         }
 
-        if (totalHours > 0)
-            return string.Format(CultureInfo.InvariantCulture, "{0}:{1:00}:{2:00}", totalHours, time.Minutes, time.Seconds);
+        if (hasCentiseconds)
+        {
+            // Centisecond precision (2 digits), e.g. 1:23:45.06
+            if (h > 0)
+                return string.Format(CultureInfo.InvariantCulture,
+                    "{0}:{1:00}:{2:00}.{3:00}", h, m, s, cs);
+            return string.Format(CultureInfo.InvariantCulture,
+                "{0}:{1:00}.{2:00}", m, s, cs);
+        }
 
-        return string.Format(CultureInfo.InvariantCulture, "{0}:{1:00}", time.Minutes, time.Seconds);
+        // Whole seconds only, e.g. 1:23:45
+        if (h > 0)
+            return string.Format(CultureInfo.InvariantCulture,
+                "{0}:{1:00}:{2:00}", h, m, s);
+        return string.Format(CultureInfo.InvariantCulture,
+            "{0}:{1:00}", m, s);
     }
 
     private string FormatSpeedrunComPlayers(JToken runPlayersToken, JToken embeddedPlayersToken)
