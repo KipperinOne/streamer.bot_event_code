@@ -1,0 +1,604 @@
+// ============================================================
+//  COMBINED: speedrun_horaro_common + speedrun_oengus_fetch
+// Action: "Update Oengus Schedule"  |  Trigger: Timer
+//  Insert ALL of this content into ONE Execute C# Code sub-action.
+//  IMPORTANT: Add System.dll in the "References" tab of this sub-action!
+//  (e.g., C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.dll)
+//
+//  Uses Oengus' built-in "Export to JSON (Horaro)" endpoint.
+//  The result has exactly the same format as a real Horaro export,
+//  so speedrun_horaro_wr / _next will continue to work without any changes.
+// ============================================================
+
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Reflection;
+using System.Text;
+using System.Text.RegularExpressions;
+using Newtonsoft.Json.Linq;
+using System.Net;
+ 
+public static class SpeedrunHoraroCommon
+{
+    private static string cachedSchedulePath;
+    private static DateTime cachedScheduleWriteUtc;
+    private static List<ScheduleRun> cachedScheduleRuns;
+    private static Type cachedCphType;
+    private static MethodInfo cachedGetGlobalVarString;
+ 
+    public static string GetConfiguredPath(object cph, string globalVarName, string fallback)
+    {
+        string configured = GetGlobalVarString(cph, globalVarName);
+        return string.IsNullOrWhiteSpace(configured) ? fallback : configured.Trim();
+    }
+ 
+    public static int GetConfiguredInt(object cph, string globalVarName, int fallback)
+    {
+        string configured = GetGlobalVarString(cph, globalVarName);
+        int value;
+        if (int.TryParse(configured, NumberStyles.Integer, CultureInfo.InvariantCulture, out value))
+            return value;
+ 
+        return fallback;
+    }
+ 
+    public static DateTimeOffset GetNowForSchedule(object cph)
+    {
+        string overrideValue = GetGlobalVarString(cph, "horaro_schedule_now");
+        if (!string.IsNullOrWhiteSpace(overrideValue))
+            return DateTimeOffset.Parse(overrideValue.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal);
+ 
+        return DateTimeOffset.Now;
+    }
+ 
+    public static List<ScheduleRun> LoadRuns(string scheduleJsonPath)
+    {
+        if (!File.Exists(scheduleJsonPath))
+            throw new FileNotFoundException("Datei nicht gefunden: " + scheduleJsonPath);
+ 
+        DateTime writeUtc = File.GetLastWriteTimeUtc(scheduleJsonPath);
+        if (cachedScheduleRuns != null &&
+            string.Equals(cachedSchedulePath, scheduleJsonPath, StringComparison.OrdinalIgnoreCase) &&
+            cachedScheduleWriteUtc == writeUtc)
+        {
+            return cachedScheduleRuns;
+        }
+ 
+        string json = File.ReadAllText(scheduleJsonPath, new UTF8Encoding(false));
+        JObject root = JObject.Parse(json);
+        JObject schedule = root["schedule"] as JObject;
+        if (schedule == null)
+            throw new InvalidDataException("Schedule-Objekt fehlt");
+ 
+        JArray columns = schedule["columns"] as JArray;
+        JArray items = schedule["items"] as JArray;
+        if (columns == null || items == null)
+            throw new InvalidDataException("Spalten oder Eintraege fehlen");
+ 
+        int gameIndex = FindColumn(columns, "Spieltitel", "Game", "Game Name");
+        int runnerIndex = FindColumn(columns, "Runner", "Runners");
+        int categoryIndex = FindColumn(columns, "Kategorie", "Category");
+        int estimateIndex = FindColumn(columns, "Estimate", "Schaetzung");
+ 
+        if (gameIndex < 0 || runnerIndex < 0 || categoryIndex < 0)
+            throw new InvalidDataException("benoetigte Spalten nicht gefunden");
+ 
+        List<ScheduleRun> runs = new List<ScheduleRun>();
+ 
+        // Some sources (e.g. Oengus's JSON export) don't provide an absolute
+        // "scheduled_t"/"length_t" per item like real Horaro does. Instead
+        // they only give a schedule-level start time plus a per-item ISO
+        // 8601 duration string ("length", e.g. "PT1H35M"). In that case we
+        // reconstruct each run's start time by walking through the items in
+        // order and accumulating durations from the schedule's start time.
+        long cursorUnix = GetScheduleStartUnix(schedule);
+        string scheduleTimezone = (string)schedule["timezone"];
+ 
+        foreach (JToken itemToken in items)
+        {
+            JObject item = itemToken as JObject;
+            if (item == null)
+                continue;
+ 
+            JArray data = item["data"] as JArray;
+            if (data == null)
+                continue;
+ 
+            ScheduleRun run = new ScheduleRun();
+            run.Game = GetData(data, gameIndex);
+            run.Runner = GetData(data, runnerIndex);
+            run.Category = GetData(data, categoryIndex);
+            run.Estimate = GetData(data, estimateIndex);
+            run.ScheduledText = ((string)item["scheduled"]) ?? "";
+            run.ScheduledUnix = GetLong(item["scheduled_t"]);
+            run.LengthSeconds = GetLong(item["length_t"]);
+            run.ScheduleTimezone = scheduleTimezone;
+ 
+            // Fallback path: no absolute scheduled_t/length_t present, but an
+            // ISO 8601 "length" duration is - derive the timing from that.
+            if (run.LengthSeconds <= 0)
+            {
+                long isoLength;
+                if (TryParseIso8601DurationSeconds((string)item["length"], out isoLength))
+                    run.LengthSeconds = isoLength;
+            }
+ 
+            if (run.ScheduledUnix <= 0 && cursorUnix > 0 && run.LengthSeconds > 0)
+                run.ScheduledUnix = cursorUnix;
+ 
+            // Always advance the cursor by this item's length so entries
+            // that get filtered out below (e.g. non-runnable rows) don't
+            // desync the running total for the items after them.
+            if (cursorUnix > 0 && run.LengthSeconds > 0)
+                cursorUnix += run.LengthSeconds;
+ 
+            if (run.ScheduledUnix <= 0 || run.LengthSeconds <= 0)
+                continue;
+ 
+            if (IsRunnableEntry(run))
+                runs.Add(run);
+        }
+ 
+        runs.Sort((a, b) => a.ScheduledUnix.CompareTo(b.ScheduledUnix));
+        cachedSchedulePath = scheduleJsonPath;
+        cachedScheduleWriteUtc = writeUtc;
+        cachedScheduleRuns = runs;
+        return runs;
+    }
+ 
+    public static ScheduleRun FindCurrentRun(List<ScheduleRun> runs, DateTimeOffset now)
+    {
+        long nowUnix = ToUnixSeconds(now);
+        foreach (ScheduleRun run in runs)
+        {
+            long endUnix = run.ScheduledUnix + run.LengthSeconds;
+            if (run.ScheduledUnix <= nowUnix && nowUnix < endUnix)
+                return run;
+        }
+ 
+        return null;
+    }
+ 
+    public static ScheduleRun FindNextRun(List<ScheduleRun> runs, DateTimeOffset now)
+    {
+        long nowUnix = ToUnixSeconds(now);
+        ScheduleRun currentRun = FindCurrentRun(runs, now);
+ 
+        foreach (ScheduleRun run in runs)
+        {
+            if (currentRun != null && run.ScheduledUnix <= currentRun.ScheduledUnix)
+                continue;
+ 
+            if (run.ScheduledUnix > nowUnix || currentRun != null)
+                return run;
+        }
+ 
+        return null;
+    }
+ 
+    public static string FormatRun(ScheduleRun run, bool includeTime)
+    {
+        string text = Clean(run.Game);
+        if (!string.IsNullOrEmpty(run.Category))
+            text += " - " + Clean(run.Category);
+        if (!string.IsNullOrEmpty(run.Runner))
+            text += " von " + Clean(run.Runner);
+        if (includeTime)
+            text += " um " + FormatScheduleTime(run);
+        if (!string.IsNullOrEmpty(run.Estimate))
+            text += " (Schaetzung: " + Clean(run.Estimate) + ")";
+ 
+        return text;
+    }
+ 
+    public static string Clean(string value)
+    {
+        return Regex.Replace((value ?? "").Trim(), @"\s+", " ");
+    }
+ 
+    public static string Normalize(string value)
+    {
+        return Clean(value).ToLowerInvariant();
+    }
+ 
+    public static long ToUnixSeconds(DateTimeOffset value)
+    {
+        return (long)(value.ToUniversalTime() - new DateTimeOffset(1970, 1, 1, 0, 0, 0, TimeSpan.Zero)).TotalSeconds;
+    }
+ 
+    private static string GetGlobalVarString(object cph, string globalVarName)
+    {
+        try
+        {
+            Type cphType = cph.GetType();
+            if (cachedGetGlobalVarString == null || cachedCphType != cphType)
+            {
+                cachedGetGlobalVarString = null;
+                cachedCphType = cphType;
+ 
+                foreach (MethodInfo candidate in cphType.GetMethods())
+                {
+                    ParameterInfo[] parameters = candidate.GetParameters();
+                    if (candidate.Name == "GetGlobalVar" &&
+                        candidate.IsGenericMethodDefinition &&
+                        parameters.Length == 2 &&
+                        parameters[0].ParameterType == typeof(string) &&
+                        parameters[1].ParameterType == typeof(bool))
+                    {
+                        cachedGetGlobalVarString = candidate.MakeGenericMethod(typeof(string));
+                        break;
+                    }
+                }
+            }
+ 
+            if (cachedGetGlobalVarString == null)
+                return "";
+ 
+            object value = cachedGetGlobalVarString.Invoke(cph, new object[] { globalVarName, true });
+            return value == null ? "" : value.ToString();
+        }
+        catch
+        {
+            return "";
+        }
+    }
+ 
+    private static int FindColumn(JArray columns, params string[] names)
+    {
+        for (int i = 0; i < columns.Count; i++)
+        {
+            string column = Normalize((string)columns[i]);
+            foreach (string name in names)
+            {
+                if (column == Normalize(name))
+                    return i;
+            }
+        }
+ 
+        return -1;
+    }
+ 
+    private static string GetData(JArray data, int index)
+    {
+        if (index < 0 || index >= data.Count || data[index].Type == JTokenType.Null)
+            return "";
+ 
+        return ((string)data[index] ?? "").Trim();
+    }
+ 
+    private static long GetLong(JToken token)
+    {
+        if (token == null)
+            return 0;
+ 
+        long value;
+        if (long.TryParse(token.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value))
+            return value;
+ 
+        return 0;
+    }
+ 
+    // Resolves the schedule's absolute start time as Unix seconds.
+    // Prefers the ISO 8601 "start" date string (reliable on both real Horaro
+    // and Oengus exports); falls back to the numeric "start_t" field only if
+    // present and positive, since some exports (e.g. Oengus) leave it at 0.
+    private static long GetScheduleStartUnix(JObject schedule)
+    {
+        string startText = (string)schedule["start"];
+        if (!string.IsNullOrEmpty(startText))
+        {
+            DateTimeOffset parsed;
+            if (DateTimeOffset.TryParse(startText, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out parsed))
+                return ToUnixSeconds(parsed);
+        }
+ 
+        long startT = GetLong(schedule["start_t"]);
+        return startT > 0 ? startT : 0;
+    }
+ 
+    // Parses an ISO 8601 duration string (e.g. "PT1H35M", "PT30M", "PT45S")
+    // into total whole seconds. Used as a fallback for exports (e.g. Oengus)
+    // that give each item's length as an ISO 8601 duration instead of the
+    // "length_t" seconds field that real Horaro provides.
+    private static bool TryParseIso8601DurationSeconds(string iso, out long totalSeconds)
+    {
+        totalSeconds = 0;
+        if (string.IsNullOrEmpty(iso) || !iso.StartsWith("PT", StringComparison.OrdinalIgnoreCase))
+            return false;
+ 
+        string s = iso.Substring(2);
+        double h = 0, m = 0, sec = 0;
+ 
+        Match matchHours = Regex.Match(s, @"([\d\.]+)H", RegexOptions.IgnoreCase);
+        Match matchMinutes = Regex.Match(s, @"([\d\.]+)M", RegexOptions.IgnoreCase);
+        Match matchSeconds = Regex.Match(s, @"([\d\.]+)S", RegexOptions.IgnoreCase);
+ 
+        if (!matchHours.Success && !matchMinutes.Success && !matchSeconds.Success)
+            return false;
+ 
+        if (matchHours.Success)
+            double.TryParse(matchHours.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out h);
+        if (matchMinutes.Success)
+            double.TryParse(matchMinutes.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out m);
+        if (matchSeconds.Success)
+            double.TryParse(matchSeconds.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out sec);
+ 
+        totalSeconds = (long)Math.Round(h * 3600 + m * 60 + sec);
+        return true;
+    }
+ 
+    private static bool IsRunnableEntry(ScheduleRun run)
+    {
+        string game = Normalize(run.Game);
+        string runner = Normalize(run.Runner);
+ 
+        if (string.IsNullOrEmpty(game) || string.IsNullOrEmpty(runner) || runner == "-")
+            return false;
+ 
+        if (game == "intro" || game == "kickoff" || game == "gdq" || game == "the checkpoint" || game.Contains("daily recap"))
+            return false;
+ 
+        if (runner == "interview crew")
+            return false;
+ 
+        return true;
+    }
+ 
+    private static string FormatScheduleTime(ScheduleRun run)
+    {
+        // Preferred path: use the human-readable "scheduled" text that real
+        // Horaro provides directly on each item.
+        if (!string.IsNullOrEmpty(run.ScheduledText))
+        {
+            try
+            {
+                DateTimeOffset scheduled = DateTimeOffset.Parse(run.ScheduledText, CultureInfo.InvariantCulture);
+                return scheduled.ToString("ddd HH:mm", CultureInfo.InvariantCulture);
+            }
+            catch
+            {
+                return run.ScheduledText;
+            }
+        }
+ 
+        // Fallback: some sources (e.g. Oengus) don't provide "scheduled" text
+        // at all, only the numeric ScheduledUnix we derived ourselves in
+        // LoadRuns(). Format that instead so a time is still shown, converted
+        // into the schedule's timezone if we can resolve it.
+        if (run.ScheduledUnix > 0)
+        {
+            DateTimeOffset scheduledUtc = DateTimeOffset.FromUnixTimeSeconds(run.ScheduledUnix);
+ 
+            if (!string.IsNullOrEmpty(run.ScheduleTimezone))
+            {
+                try
+                {
+                    TimeZoneInfo tz = TimeZoneInfo.FindSystemTimeZoneById(run.ScheduleTimezone);
+                    DateTimeOffset local = TimeZoneInfo.ConvertTime(scheduledUtc, tz);
+                    return local.ToString("ddd HH:mm", CultureInfo.InvariantCulture);
+                }
+                catch
+                {
+                    // Timezone ID not recognized by the OS - fall through to UTC below.
+                }
+            }
+ 
+            return scheduledUtc.ToString("ddd HH:mm", CultureInfo.InvariantCulture) + " UTC";
+        }
+ 
+        return "";
+    }
+ 
+    public class ScheduleRun
+    {
+        public string Game;
+        public string Runner;
+        public string Category;
+        public string Estimate;
+        public string ScheduledText;
+        public long ScheduledUnix;
+        public long LengthSeconds;
+ 
+        // IANA timezone of the schedule (e.g. "Europe/Berlin"), used to
+        // display the correct local time when ScheduledText is missing
+        // (e.g. Oengus exports) and we only have the raw UTC ScheduledUnix.
+        public string ScheduleTimezone;
+    }
+}
+public class CPHInline
+{
+    public bool Execute()
+    {
+        // Oengus identifies a schedule by two slugs found in its URL:
+        // https://oengus.io/marathon/{marathonId}/schedule/{scheduleSlug}
+        //                              ^^^^^^^^^^          ^^^^^^^^^^^^
+        string marathonId = SpeedrunHoraroCommon.GetConfiguredPath(CPH, "oengus_marathon_id", "DEIN-MARATHON-SLUG");
+        string scheduleSlug = SpeedrunHoraroCommon.GetConfiguredPath(CPH, "oengus_schedule_id", "DEIN-SCHEDULE-SLUG");
+ 
+        string outputPath = SpeedrunHoraroCommon.GetConfiguredPath(CPH, "horaro_schedule_json_path", @"C:\StreamerBot\speedrun_schedule.json");
+        int timeoutMs = SpeedrunHoraroCommon.GetConfiguredInt(CPH, "horaro_schedule_request_timeout_ms", 8000);
+        string userAgent = SpeedrunHoraroCommon.GetConfiguredPath(CPH, "horaro_schedule_user_agent", "streamerbot-speedrun-event/1.0");
+ 
+        // Optional full override: if set, this exact export URL is used as-is
+        // and the slug-resolution step below is skipped entirely.
+        string overrideUrl = SpeedrunHoraroCommon.GetConfiguredPath(CPH, "oengus_schedule_api_url", "");
+ 
+        try
+        {
+            SetUpTlsProtocols();
+ 
+            string apiUrl;
+            if (!string.IsNullOrEmpty(overrideUrl))
+            {
+                apiUrl = overrideUrl;
+            }
+            else
+            {
+                // Step 1: resolve the schedule's numeric id from its slug.
+                string listUrl = "https://oengus.io/api/v2/marathons/" + Uri.EscapeDataString(marathonId) + "/schedules";
+                CPH.LogInfo("Oengus-Fetch: loese Schedule-Slug '" + scheduleSlug + "' auf ueber " + listUrl);
+ 
+                string scheduleId = ResolveScheduleId(listUrl, scheduleSlug, timeoutMs, userAgent);
+                if (string.IsNullOrEmpty(scheduleId))
+                {
+                    CPH.LogError("Oengus-Fetch: Schedule mit Slug '" + scheduleSlug + "' wurde unter Marathon '" + marathonId + "' nicht gefunden. Bitte oengus_marathon_id/oengus_schedule_id pruefen.");
+                    return false;
+                }
+ 
+                // The export endpoint requires a "zoneId" (IANA timezone) and
+                // a "locale" (language code) query parameter for formatting
+                // the exported schedule's dates/times and labels.
+                string zoneId = SpeedrunHoraroCommon.GetConfiguredPath(CPH, "oengus_schedule_zone_id", "Europe/Berlin");
+                string locale = SpeedrunHoraroCommon.GetConfiguredPath(CPH, "oengus_schedule_locale", "de");
+ 
+                apiUrl = "https://oengus.io/api/v2/marathons/" + Uri.EscapeDataString(marathonId)
+                    + "/schedules/" + Uri.EscapeDataString(scheduleId) + "/export"
+                    + "?format=json&zoneId=" + Uri.EscapeDataString(zoneId)
+                    + "&locale=" + Uri.EscapeDataString(locale);
+            }
+ 
+            CPH.LogInfo("Oengus-Fetch: verwende URL = " + apiUrl + " | Ziel-Datei = " + outputPath);
+ 
+            string rawJson = HttpGet(apiUrl, timeoutMs, userAgent);
+            JObject root = JObject.Parse(rawJson);
+ 
+            // Oengus's JSON export already produces the same {"schedule": {...}}
+            // shape that speedrun_horaro_common expects, but we normalize here
+            // too in case a bare schedule object is returned.
+            JObject scheduleObject = root["schedule"] as JObject ?? root;
+ 
+            if (scheduleObject["items"] == null)
+            {
+                CPH.LogError("Oengus-Antwort enthaelt kein 'items'-Feld. Bitte marathonId/scheduleId pruefen: " + apiUrl);
+                return false;
+            }
+ 
+            JObject normalized = new JObject();
+            normalized["schedule"] = scheduleObject;
+ 
+            string directory = Path.GetDirectoryName(outputPath);
+            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+                Directory.CreateDirectory(directory);
+ 
+            File.WriteAllText(outputPath, normalized.ToString(), new UTF8Encoding(false));
+            CPH.LogInfo("Oengus-Schedule aktualisiert: " + outputPath);
+            return true;
+        }
+        catch (WebException ex)
+        {
+            HttpWebResponse response = ex.Response as HttpWebResponse;
+            string detail;
+            if (response != null)
+            {
+                string body = "";
+                try
+                {
+                    using (Stream errorStream = response.GetResponseStream())
+                    using (StreamReader errorReader = new StreamReader(errorStream, Encoding.UTF8))
+                    {
+                        body = errorReader.ReadToEnd();
+                    }
+                }
+                catch
+                {
+                    // ignore secondary read failures, we still log the status code below
+                }
+ 
+                detail = "HTTP " + (int)response.StatusCode + " " + response.StatusCode;
+                if (!string.IsNullOrEmpty(body))
+                    detail += " | Antwort vom Server: " + body;
+            }
+            else
+            {
+                detail = ex.Message;
+            }
+ 
+            CPH.LogError("Oengus-Schedule konnte nicht abgerufen werden: " + detail);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            CPH.LogError("Oengus-Schedule konnte nicht abgerufen werden: " + ex.Message);
+            return false;
+        }
+    }
+ 
+    // Fetches /marathons/{marathonId}/schedules and returns the numeric "id"
+    // whose "slug" matches scheduleSlug (case-insensitive), or null if not found.
+    private string ResolveScheduleId(string listUrl, string scheduleSlug, int timeoutMs, string userAgent)
+    {
+        string rawJson = HttpGet(listUrl, timeoutMs, userAgent);
+        JToken parsed = JToken.Parse(rawJson);
+ 
+        // The schedules list is normally wrapped as {"data": [...]}, but
+        // handle a bare top-level array too, just in case.
+        JArray data = parsed.Type == JTokenType.Array
+            ? (JArray)parsed
+            : parsed["data"] as JArray;
+ 
+        if (data == null)
+            return null;
+ 
+        foreach (JToken token in data)
+        {
+            JObject entry = token as JObject;
+            if (entry == null)
+                continue;
+ 
+            string slug = (string)entry["slug"];
+            if (string.Equals(slug, scheduleSlug, StringComparison.OrdinalIgnoreCase))
+                return entry["id"] != null ? entry["id"].ToString() : null;
+        }
+ 
+        return null;
+    }
+ 
+    private string HttpGet(string url, int timeoutMs, string userAgent)
+    {
+        HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
+        request.Method = "GET";
+        request.Accept = "application/json";
+        request.UserAgent = userAgent;
+        request.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
+        request.Timeout = timeoutMs;
+        request.ReadWriteTimeout = timeoutMs;
+ 
+        using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+        using (Stream stream = response.GetResponseStream())
+        using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+        {
+            return reader.ReadToEnd();
+        }
+    }
+ 
+    // Sets up the broadest safe TLS negotiation (1.2 + 1.3, if supported by
+    // the OS/.NET version). Fixes "could not create SSL/TLS secure channel"
+    // errors caused by overly strict protocol defaults in .NET Framework.
+    private static void SetUpTlsProtocols()
+    {
+        // Tls=192, Tls11=768, Tls12=3072, Tls13=12288 (Tls13 enum value does
+        // not exist in every .NET Framework version, hence using raw ints).
+        int wanted = 192 | 768 | 3072 | 12288;
+ 
+        try
+        {
+            ServicePointManager.SecurityProtocol = (SecurityProtocolType)wanted;
+            return;
+        }
+        catch
+        {
+        }
+ 
+        try
+        {
+            ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
+        }
+        catch
+        {
+            // If even this fails, the request proceeds with the system default.
+        }
+    }
+}
+ 
