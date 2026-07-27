@@ -9,7 +9,6 @@
 //  (visible in the Streamer.bot Logs window) for easier troubleshooting
 // ============================================================
 
-
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -19,7 +18,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json.Linq;
 using System.Net;
- 
+
 public static class SpeedrunHoraroCommon
 {
     private static string cachedSchedulePath;
@@ -27,37 +26,37 @@ public static class SpeedrunHoraroCommon
     private static List<ScheduleRun> cachedScheduleRuns;
     private static Type cachedCphType;
     private static MethodInfo cachedGetGlobalVarString;
- 
+
     public static string GetConfiguredPath(object cph, string globalVarName, string fallback)
     {
         string configured = GetGlobalVarString(cph, globalVarName);
         return string.IsNullOrWhiteSpace(configured) ? fallback : configured.Trim();
     }
- 
+
     public static int GetConfiguredInt(object cph, string globalVarName, int fallback)
     {
         string configured = GetGlobalVarString(cph, globalVarName);
         int value;
         if (int.TryParse(configured, NumberStyles.Integer, CultureInfo.InvariantCulture, out value))
             return value;
- 
+
         return fallback;
     }
- 
+
     public static DateTimeOffset GetNowForSchedule(object cph)
     {
         string overrideValue = GetGlobalVarString(cph, "horaro_schedule_now");
         if (!string.IsNullOrWhiteSpace(overrideValue))
             return DateTimeOffset.Parse(overrideValue.Trim(), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal);
- 
+
         return DateTimeOffset.Now;
     }
- 
+
     public static List<ScheduleRun> LoadRuns(string scheduleJsonPath)
     {
         if (!File.Exists(scheduleJsonPath))
             throw new FileNotFoundException("Datei nicht gefunden: " + scheduleJsonPath);
- 
+
         DateTime writeUtc = File.GetLastWriteTimeUtc(scheduleJsonPath);
         if (cachedScheduleRuns != null &&
             string.Equals(cachedSchedulePath, scheduleJsonPath, StringComparison.OrdinalIgnoreCase) &&
@@ -65,28 +64,28 @@ public static class SpeedrunHoraroCommon
         {
             return cachedScheduleRuns;
         }
- 
+
         string json = File.ReadAllText(scheduleJsonPath, new UTF8Encoding(false));
         JObject root = JObject.Parse(json);
         JObject schedule = root["schedule"] as JObject;
         if (schedule == null)
             throw new InvalidDataException("Schedule-Objekt fehlt");
- 
+
         JArray columns = schedule["columns"] as JArray;
         JArray items = schedule["items"] as JArray;
         if (columns == null || items == null)
-            throw new InvalidDataException("Spalten oder Eintraege fehlen");
- 
+            throw new InvalidDataException("Spalten oder Einträge fehlen");
+
         int gameIndex = FindColumn(columns, "Spieltitel", "Game", "Game Name");
         int runnerIndex = FindColumn(columns, "Runner", "Runners");
         int categoryIndex = FindColumn(columns, "Kategorie", "Category");
         int estimateIndex = FindColumn(columns, "Estimate");
- 
+
         if (gameIndex < 0 || runnerIndex < 0 || categoryIndex < 0)
-            throw new InvalidDataException("benötigte Spalten nicht gefunden");
- 
+            throw new InvalidDataException("benoetigte Spalten nicht gefunden");
+
         List<ScheduleRun> runs = new List<ScheduleRun>();
- 
+
         // Some sources (e.g. Oengus's JSON export) don't provide an absolute
         // "scheduled_t"/"length_t" per item like real Horaro does. Instead
         // they only give a schedule-level start time plus a per-item ISO
@@ -95,17 +94,17 @@ public static class SpeedrunHoraroCommon
         // order and accumulating durations from the schedule's start time.
         long cursorUnix = GetScheduleStartUnix(schedule);
         string scheduleTimezone = (string)schedule["timezone"];
- 
+
         foreach (JToken itemToken in items)
         {
             JObject item = itemToken as JObject;
             if (item == null)
                 continue;
- 
+
             JArray data = item["data"] as JArray;
             if (data == null)
                 continue;
- 
+
             ScheduleRun run = new ScheduleRun();
             run.Game = GetData(data, gameIndex);
             run.Runner = GetData(data, runnerIndex);
@@ -115,7 +114,7 @@ public static class SpeedrunHoraroCommon
             run.ScheduledUnix = GetLong(item["scheduled_t"]);
             run.LengthSeconds = GetLong(item["length_t"]);
             run.ScheduleTimezone = scheduleTimezone;
- 
+
             // Fallback path: no absolute scheduled_t/length_t present, but an
             // ISO 8601 "length" duration is - derive the timing from that.
             if (run.LengthSeconds <= 0)
@@ -124,30 +123,30 @@ public static class SpeedrunHoraroCommon
                 if (TryParseIso8601DurationSeconds((string)item["length"], out isoLength))
                     run.LengthSeconds = isoLength;
             }
- 
+
             if (run.ScheduledUnix <= 0 && cursorUnix > 0 && run.LengthSeconds > 0)
                 run.ScheduledUnix = cursorUnix;
- 
+
             // Always advance the cursor by this item's length so entries
             // that get filtered out below (e.g. non-runnable rows) don't
             // desync the running total for the items after them.
             if (cursorUnix > 0 && run.LengthSeconds > 0)
                 cursorUnix += run.LengthSeconds;
- 
+
             if (run.ScheduledUnix <= 0 || run.LengthSeconds <= 0)
                 continue;
- 
+
             if (IsRunnableEntry(run))
                 runs.Add(run);
         }
- 
+
         runs.Sort((a, b) => a.ScheduledUnix.CompareTo(b.ScheduledUnix));
         cachedSchedulePath = scheduleJsonPath;
         cachedScheduleWriteUtc = writeUtc;
         cachedScheduleRuns = runs;
         return runs;
     }
- 
+
     public static ScheduleRun FindCurrentRun(List<ScheduleRun> runs, DateTimeOffset now)
     {
         long nowUnix = ToUnixSeconds(now);
@@ -157,27 +156,27 @@ public static class SpeedrunHoraroCommon
             if (run.ScheduledUnix <= nowUnix && nowUnix < endUnix)
                 return run;
         }
- 
+
         return null;
     }
- 
+
     public static ScheduleRun FindNextRun(List<ScheduleRun> runs, DateTimeOffset now)
     {
         long nowUnix = ToUnixSeconds(now);
         ScheduleRun currentRun = FindCurrentRun(runs, now);
- 
+
         foreach (ScheduleRun run in runs)
         {
             if (currentRun != null && run.ScheduledUnix <= currentRun.ScheduledUnix)
                 continue;
- 
+
             if (run.ScheduledUnix > nowUnix || currentRun != null)
                 return run;
         }
- 
+
         return null;
     }
- 
+
     public static string FormatRun(ScheduleRun run, bool includeTime)
     {
         string text = Clean(run.Game);
@@ -189,25 +188,25 @@ public static class SpeedrunHoraroCommon
             text += " um " + FormatScheduleTime(run);
         if (!string.IsNullOrEmpty(run.Estimate))
             text += " (Estimate: " + Clean(run.Estimate) + ")";
- 
+
         return text;
     }
- 
+
     public static string Clean(string value)
     {
         return Regex.Replace((value ?? "").Trim(), @"\s+", " ");
     }
- 
+
     public static string Normalize(string value)
     {
         return Clean(value).ToLowerInvariant();
     }
- 
+
     public static long ToUnixSeconds(DateTimeOffset value)
     {
         return (long)(value.ToUniversalTime() - new DateTimeOffset(1970, 1, 1, 0, 0, 0, TimeSpan.Zero)).TotalSeconds;
     }
- 
+
     private static string GetGlobalVarString(object cph, string globalVarName)
     {
         try
@@ -217,7 +216,7 @@ public static class SpeedrunHoraroCommon
             {
                 cachedGetGlobalVarString = null;
                 cachedCphType = cphType;
- 
+
                 foreach (MethodInfo candidate in cphType.GetMethods())
                 {
                     ParameterInfo[] parameters = candidate.GetParameters();
@@ -232,10 +231,10 @@ public static class SpeedrunHoraroCommon
                     }
                 }
             }
- 
+
             if (cachedGetGlobalVarString == null)
                 return "";
- 
+
             object value = cachedGetGlobalVarString.Invoke(cph, new object[] { globalVarName, true });
             return value == null ? "" : value.ToString();
         }
@@ -244,7 +243,7 @@ public static class SpeedrunHoraroCommon
             return "";
         }
     }
- 
+
     private static int FindColumn(JArray columns, params string[] names)
     {
         for (int i = 0; i < columns.Count; i++)
@@ -256,30 +255,30 @@ public static class SpeedrunHoraroCommon
                     return i;
             }
         }
- 
+
         return -1;
     }
- 
+
     private static string GetData(JArray data, int index)
     {
         if (index < 0 || index >= data.Count || data[index].Type == JTokenType.Null)
             return "";
- 
+
         return ((string)data[index] ?? "").Trim();
     }
- 
+
     private static long GetLong(JToken token)
     {
         if (token == null)
             return 0;
- 
+
         long value;
         if (long.TryParse(token.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value))
             return value;
- 
+
         return 0;
     }
- 
+
     // Resolves the schedule's absolute start time as Unix seconds.
     // Prefers the ISO 8601 "start" date string (reliable on both real Horaro
     // and Oengus exports); falls back to the numeric "start_t" field only if
@@ -293,11 +292,11 @@ public static class SpeedrunHoraroCommon
             if (DateTimeOffset.TryParse(startText, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out parsed))
                 return ToUnixSeconds(parsed);
         }
- 
+
         long startT = GetLong(schedule["start_t"]);
         return startT > 0 ? startT : 0;
     }
- 
+
     // Parses an ISO 8601 duration string (e.g. "PT1H35M", "PT30M", "PT45S")
     // into total whole seconds. Used as a fallback for exports (e.g. Oengus)
     // that give each item's length as an ISO 8601 duration instead of the
@@ -307,45 +306,45 @@ public static class SpeedrunHoraroCommon
         totalSeconds = 0;
         if (string.IsNullOrEmpty(iso) || !iso.StartsWith("PT", StringComparison.OrdinalIgnoreCase))
             return false;
- 
+
         string s = iso.Substring(2);
         double h = 0, m = 0, sec = 0;
- 
+
         Match matchHours = Regex.Match(s, @"([\d\.]+)H", RegexOptions.IgnoreCase);
         Match matchMinutes = Regex.Match(s, @"([\d\.]+)M", RegexOptions.IgnoreCase);
         Match matchSeconds = Regex.Match(s, @"([\d\.]+)S", RegexOptions.IgnoreCase);
- 
+
         if (!matchHours.Success && !matchMinutes.Success && !matchSeconds.Success)
             return false;
- 
+
         if (matchHours.Success)
             double.TryParse(matchHours.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out h);
         if (matchMinutes.Success)
             double.TryParse(matchMinutes.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out m);
         if (matchSeconds.Success)
             double.TryParse(matchSeconds.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out sec);
- 
+
         totalSeconds = (long)Math.Round(h * 3600 + m * 60 + sec);
         return true;
     }
- 
+
     private static bool IsRunnableEntry(ScheduleRun run)
     {
         string game = Normalize(run.Game);
         string runner = Normalize(run.Runner);
- 
+
         if (string.IsNullOrEmpty(game) || string.IsNullOrEmpty(runner) || runner == "-")
             return false;
- 
+
         if (game == "intro" || game == "kickoff" || game == "gdq" || game == "the checkpoint" || game.Contains("daily recap"))
             return false;
- 
+
         if (runner == "interview crew")
             return false;
- 
+
         return true;
     }
- 
+
     private static string FormatScheduleTime(ScheduleRun run)
     {
         // Preferred path: use the human-readable "scheduled" text that real
@@ -362,7 +361,7 @@ public static class SpeedrunHoraroCommon
                 return run.ScheduledText;
             }
         }
- 
+
         // Fallback: some sources (e.g. Oengus) don't provide "scheduled" text
         // at all, only the numeric ScheduledUnix we derived ourselves in
         // LoadRuns(). Format that instead so a time is still shown, converted
@@ -370,27 +369,65 @@ public static class SpeedrunHoraroCommon
         if (run.ScheduledUnix > 0)
         {
             DateTimeOffset scheduledUtc = DateTimeOffset.FromUnixTimeSeconds(run.ScheduledUnix);
- 
-            if (!string.IsNullOrEmpty(run.ScheduleTimezone))
+            TimeZoneInfo tz = ResolveTimeZone(run.ScheduleTimezone);
+
+            if (tz != null)
             {
-                try
-                {
-                    TimeZoneInfo tz = TimeZoneInfo.FindSystemTimeZoneById(run.ScheduleTimezone);
-                    DateTimeOffset local = TimeZoneInfo.ConvertTime(scheduledUtc, tz);
-                    return local.ToString("ddd HH:mm", CultureInfo.InvariantCulture);
-                }
-                catch
-                {
-                    // Timezone ID not recognized by the OS - fall through to UTC below.
-                }
+                DateTimeOffset local = TimeZoneInfo.ConvertTime(scheduledUtc, tz);
+                return local.ToString("ddd HH:mm", CultureInfo.InvariantCulture);
             }
- 
+
             return scheduledUtc.ToString("ddd HH:mm", CultureInfo.InvariantCulture) + " UTC";
         }
- 
+
         return "";
     }
- 
+
+    // Classic .NET Framework (which Streamer.bot runs on) only understands
+    // Windows timezone IDs (e.g. "W. Europe Standard Time"), not the IANA
+    // names (e.g. "Europe/Berlin") that sources like Oengus provide. This
+    // tries the IANA name directly first (works on newer .NET runtimes),
+    // then falls back to a small mapping table of common IANA -> Windows IDs.
+    private static TimeZoneInfo ResolveTimeZone(string timezoneId)
+    {
+        if (string.IsNullOrEmpty(timezoneId))
+            return null;
+
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(timezoneId);
+        }
+        catch
+        {
+            // Fall through to the mapping table below.
+        }
+
+        string windowsId;
+        if (IanaToWindowsTimeZones.TryGetValue(timezoneId, out windowsId))
+        {
+            try
+            {
+                return TimeZoneInfo.FindSystemTimeZoneById(windowsId);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    // Common IANA timezone names used by speedrunning marathons, mapped to
+    // their classic .NET Framework / Windows timezone ID equivalent.
+    // Extend this list if your event uses a timezone not covered here.
+    private static readonly Dictionary<string, string> IanaToWindowsTimeZones = new Dictionary<string, string>
+    {
+        { "Europe/Berlin", "W. Europe Standard Time" },
+        { "America/New_York", "Eastern Standard Time" },
+        { "UTC", "UTC" },
+    };
+
     public class ScheduleRun
     {
         public string Game;
@@ -400,7 +437,7 @@ public static class SpeedrunHoraroCommon
         public string ScheduledText;
         public long ScheduledUnix;
         public long LengthSeconds;
- 
+
         // IANA timezone of the schedule (e.g. "Europe/Berlin"), used to
         // display the correct local time when ScheduledText is missing
         // (e.g. Oengus exports) and we only have the raw UTC ScheduledUnix.
@@ -412,21 +449,21 @@ public class CPHInline
     public bool Execute()
     {
         // Enter the JSON export URL for your schedule here. If your
-        // schedule page is, for example, "https://horaro.org/meinevent/meinschedule,"
+        // schedule page is, for example, "https://horaro.org/meinevent/meinschedule",
         // simply add ".json" to the end:
         // -> https://horaro.org/meinevent/meinschedule.json
         string defaultUrl = "https://horaro.org/DEIN-EVENT-SLUG/DEIN-SCHEDULE-SLUG.json";
- 
+
         string apiUrl = SpeedrunHoraroCommon.GetConfiguredPath(CPH, "horaro_schedule_api_url", defaultUrl);
         string outputPath = SpeedrunHoraroCommon.GetConfiguredPath(CPH, "horaro_schedule_json_path", @"C:\StreamerBot\speedrun_schedule.json");
         int timeoutMs = SpeedrunHoraroCommon.GetConfiguredInt(CPH, "horaro_schedule_request_timeout_ms", 8000);
- 
+
         CPH.LogInfo("Horaro-Fetch: verwende URL = " + apiUrl + " | Ziel-Datei = " + outputPath);
- 
+
         try
         {
             SetUpTlsProtocols();
- 
+
             HttpWebRequest request = (HttpWebRequest)WebRequest.Create(apiUrl);
             request.Method = "GET";
             request.Accept = "application/json";
@@ -434,7 +471,7 @@ public class CPHInline
             request.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
             request.Timeout = timeoutMs;
             request.ReadWriteTimeout = timeoutMs;
- 
+
             JObject root;
             using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
             using (Stream stream = response.GetResponseStream())
@@ -442,28 +479,28 @@ public class CPHInline
             {
                 root = JObject.Parse(reader.ReadToEnd());
             }
- 
+
             // Depending on the Horaro endpoint, the Schedule object is either
             // located directly in the root or under a "schedule" key.
             // We normalize this here so that LoadRuns() in
             // speedrun_horaro_common always finds root.schedule.*.
             JObject scheduleObject = root["schedule"] as JObject ?? root;
- 
+
             if (scheduleObject["items"] == null)
             {
-                CPH.LogError("Horaro-Antwort enthaelt kein 'items'-Feld. Bitte URL pruefen: " + apiUrl);
+                CPH.LogError("Horaro-Antwort enthält kein 'items'-Feld. Bitte URL pruefen: " + apiUrl);
                 return false;
             }
- 
+
             JObject normalized = new JObject();
             normalized["schedule"] = scheduleObject;
- 
+
             string directory = Path.GetDirectoryName(outputPath);
             if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
                 Directory.CreateDirectory(directory);
- 
+
             File.WriteAllText(outputPath, normalized.ToString(), new UTF8Encoding(false));
-            CPH.LogInfo("Schedule aktualisiert: " + outputPath);
+            CPH.LogInfo("Horaro-Schedule aktualisiert: " + outputPath);
             return true;
         }
         catch (WebException ex)
@@ -472,16 +509,16 @@ public class CPHInline
             string detail = response != null
                 ? "HTTP " + (int)response.StatusCode + " " + response.StatusCode
                 : ex.Message;
-            CPH.LogError("Schedule konnte nicht abgerufen werden (" + apiUrl + "): " + detail);
+            CPH.LogError("Horaro-Schedule konnte nicht abgerufen werden (" + apiUrl + "): " + detail);
             return false;
         }
         catch (Exception ex)
         {
-            CPH.LogError("Schedule konnte nicht abgerufen werden: " + ex.Message);
+            CPH.LogError("Horaro-Schedule konnte nicht abgerufen werden: " + ex.Message);
             return false;
         }
     }
- 
+
     // Sets the broadest possible, secure TLS negotiation (1.2 + 1.3, if supported by the
     // operating system/.NET). Resolves "Unable to establish a secure
     // SSL/TLS channel" errors that may result from overly strict protocol
@@ -491,7 +528,7 @@ public class CPHInline
         // Tls=192, Tls11=768, Tls12=3072, Tls13=12288 (The Tls13 enum value
         // does not exist in every version of the .NET Framework, so it is specified as a number instead of a constant).
         int wanted = 192 | 768 | 3072 | 12288;
- 
+
         try
         {
             ServicePointManager.SecurityProtocol = (SecurityProtocolType)wanted;
@@ -500,7 +537,7 @@ public class CPHInline
         catch
         {
         }
- 
+
         try
         {
             ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
@@ -512,4 +549,3 @@ public class CPHInline
         }
     }
 }
- 
