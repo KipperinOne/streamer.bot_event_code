@@ -27,10 +27,17 @@ Default paths:
 - Schedule JSON: `C:\StreamerBot\speedrun_schedule.json`
 - WR/PB CSV: `C:\StreamerBot\speedrun_wr.csv`
 
-Optional global variables:
+Global variables you need:
+- Schedule is on horaro:
+  - `horaro_schedule_json_path`: override the schedule JSON path.
+  - `horaro_schedule_api_url`: Horaro API URL used by `speedrun_horaro_fetch`, for example `https://horaro.net/-/api/v1/schedules/0911pcbeeb1ep27a69` for the old AGDQ 2026 German restream test schedule.
+ 
+- Schedule is on oengus
+  - `oengus_marathon_id`: Oengus API URL used by `speedrun_oengus_fetch`, the URL is build like this: `https://oengus.io/marathon/{marathonId}/schedule/{scheduleSlug}` you only need to input the marathonID NOT the whole URL
+  - `oengus_schedule_id`: Oengus API URL used by `speedrun_oengus_fetch`, the URL is build like this: `https://oengus.io/marathon/{marathonId}/schedule/{scheduleSlug}` you only need to input the scheduleSlug NOT the whole URL
 
-- `horaro_schedule_json_path`: override the schedule JSON path.
-- `horaro_schedule_api_url`: Horaro API URL used by `speedrun_horaro_fetch`, for example `https://horaro.net/-/api/v1/schedules/0911pcbeeb1ep27a69` for the old AGDQ 2026 German restream test schedule.
+
+Optional global variables:
 - `horaro_schedule_timeout_ms`: Horaro request timeout for the fetch action. Defaults to `8000`.
 - `horaro_schedule_user_agent`: custom Horaro User-Agent. Defaults to `streamerbot-horaro-schedule/1.0`.
 - `speedrun_wr_csv_path`: override the CSV path.
@@ -39,6 +46,7 @@ Optional global variables:
 - `speedruncom_error_cache_seconds`: live lookup failure cache duration in seconds. Defaults to `60`.
 - `speedruncom_request_timeout_ms`: speedrun.com request timeout. Defaults to `6000`.
 - `speedruncom_user_agent`: custom speedrun.com User-Agent. Defaults to `streamerbot-speedrun-event/1.0`.
+- `oengus_schedule_locale`: Let's you change the language of the file from oengus. If empty. default is `en` (english) 
 
 Fetch status globals written by `speedrun_horaro_fetch`:
 
